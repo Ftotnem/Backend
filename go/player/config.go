@@ -25,13 +25,13 @@ func LoadConfig() (*Config, error) {
 
 	// Set defaults if environment variables are not provided
 	if cfg.ListenAddr == "" {
-		cfg.ListenAddr = ":8081"
+		cfg.ListenAddr = "localhost:8081"
 	}
 	if cfg.MongoDBConnStr == "" {
 		cfg.MongoDBConnStr = "mongodb://localhost:27017"
 	}
 	if cfg.MongoDBDatabase == "" {
-		cfg.MongoDBDatabase = "minestom" // Default database name
+		cfg.MongoDBDatabase = "test" // Default database name
 	}
 	if cfg.MongoDBPlayersCollection == "" {
 		cfg.MongoDBPlayersCollection = "players" // Default collection name

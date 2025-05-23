@@ -47,7 +47,7 @@ func ConnectMongoDB(connStr string) (*mongo.Client, error) {
 
 // CreatePlayer ... (rest of CreatePlayer code)
 func (ps *PlayerStore) CreatePlayer(ctx context.Context, player *models.Player) error {
-	if player.CreatedAt.IsZero() {
+	if player.CreatedAt == nil || player.CreatedAt.IsZero() {
 		now := time.Now()
 		player.CreatedAt = &now
 	}
