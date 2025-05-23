@@ -16,15 +16,15 @@ type Booster struct {
 // Player repcrenset a player's profile data stored presistently in MongoDB
 
 type Player struct {
-	UUID                 string
-	Username             string
-	Team                 string
-	TotalPlayertimeTicks float64
-	DeltaPlayTimeTicks   float64
-	Banned               bool
-	BanExpiresAt         *time.Time
-	ActiveBoosters       []Booster
-	LastLoginAt          *time.Time
-	CreatedAt            *time.Time
-	IsNewPlayer          bool `json:"-" bson:"-"`
+	UUID               string
+	Username           string
+	Team               string
+	TotalPlaytimeTicks float64
+	DeltaPlayTimeTicks float64
+	Banned             bool
+	BanExpiresAt       *time.Time
+	ActiveBoosters     []Booster
+	LastLoginAt        *time.Time
+	CreatedAt          *time.Time
+	IsNewPlayer        bool `json:"-" bson:"-"`
 }
