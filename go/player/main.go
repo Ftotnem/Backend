@@ -1,32 +1,32 @@
-// go/player-data-service/main.go
 package main
 
 import (
 	"context"
 	"log"
-	"net/http"
+	"math/rand"
+	"net/http" // Keep http for http.ErrServerClosed
 	"os"
 	"os/signal"
 	"syscall"
 	"time"
 
-	"github.com/gorilla/mux"
+	"github.com/Ftotnem/Backend/go/shared/api" // Corrected import path for your api package
+	"go.mongodb.org/mongo-driver/bson"
 )
 
 func main() {
-	// 1. Load Configuration
+	rand.Seed(time.Now().UnixNano())
+
 	cfg, err := LoadConfig()
 	if err != nil {
 		log.Fatalf("Failed to load configuration: %v", err)
 	}
 
-	// 2. Connect to MongoDB
 	mongoClient, err := ConnectMongoDB(cfg.MongoDBConnStr)
 	if err != nil {
 		log.Fatalf("Failed to connect to MongoDB: %v", err)
 	}
 	defer func() {
-		// Disconnect from MongoDB when the main function exits
 		if err = mongoClient.Disconnect(context.Background()); err != nil {
 			log.Printf("Error disconnecting from MongoDB: %v", err)
 		} else {
@@ -34,54 +34,98 @@ func main() {
 		}
 	}()
 
-	// 3. Initialize PlayerStore
-	playerStore := NewPlayerStore(mongoClient, cfg.MongoDBDatabase, cfg.MongoDBPlayersCollection)
-	playerService := NewPlayerService(playerStore) // Pass store to handlers
+	mojangClient := NewMojangClient()
 
-	// 4. Set up HTTP Router
-	router := mux.NewRouter()
+	playerStore := NewPlayerStore(mongoClient, cfg.MongoDBDatabase, cfg.MongoDBPlayersCollection, mojangClient)
+	playerService := NewPlayerService(playerStore)
 
-	// Player Management Routes
-	router.HandleFunc("/players", playerService.CreatePlayerHandler).Methods("POST")
-	router.HandleFunc("/players/{uuid}", playerService.GetPlayerHandler).Methods("GET")
-	router.HandleFunc("/players/{uuid}/playtime", playerService.UpdatePlayerPlaytimeHandler).Methods("PUT")
-	router.HandleFunc("/players/{uuid}/deltaplaytime", playerService.UpdatePlayerDeltaPlaytimeHandler).Methods("PUT")
-	router.HandleFunc("/players/{uuid}/ban", playerService.UpdatePlayerBanStatusHandler).Methods("PUT")
+	go startUsernameFiller(playerStore, mojangClient, 1*time.Minute)
 
-	// 5. Start HTTP Server
-	server := &http.Server{
-		Addr:    cfg.ListenAddr,
-		Handler: router,
-		// Good practice to set timeouts to prevent slowloris attacks and dead connections
-		ReadTimeout:  10 * time.Second,
-		WriteTimeout: 10 * time.Second,
-		IdleTimeout:  120 * time.Second,
-	}
+	// Use your new BaseServer from the shared API module
+	baseServer := api.NewBaseServer(cfg.ListenAddr)
 
-	// Goroutine to start the HTTP server
+	// Register your handlers on the BaseServer's router
+	baseServer.Router.HandleFunc("/players/{uuid}", playerService.GetPlayerHandler).Methods("GET")
+	baseServer.Router.HandleFunc("/players/{uuid}/playtime", playerService.UpdatePlayerPlaytimeHandler).Methods("PUT")
+	baseServer.Router.HandleFunc("/players/{uuid}/deltaplaytime", playerService.UpdatePlayerDeltaPlaytimeHandler).Methods("PUT")
+	baseServer.Router.HandleFunc("/players/{uuid}/ban", playerService.UpdatePlayerBanStatusHandler).Methods("PUT")
+	baseServer.Router.HandleFunc("/players/{uuid}/lastlogin", playerService.UpdatePlayerLastLoginHandler).Methods("PUT")
+
 	go func() {
 		log.Printf("Player Data Service listening on %s", cfg.ListenAddr)
-		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		if err := baseServer.Start(); err != nil && err != http.ErrServerClosed { // Use baseServer.Start()
 			log.Fatalf("Could not listen on %s: %v", cfg.ListenAddr, err)
 		}
 	}()
 
-	// 6. Graceful Shutdown
-	// Listen for OS signals to gracefully shut down (e.g., Ctrl+C, kill command)
 	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM) // Capture Ctrl+C and kill
+	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 
-	// Block until we receive a signal
 	sig := <-sigChan
 	log.Printf("Received signal %s, shutting down...", sig)
 
-	// Create a context with a timeout for the shutdown
 	shutdownCtx, cancelShutdown := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancelShutdown()
 
-	// Attempt to gracefully shut down the HTTP server
-	if err := server.Shutdown(shutdownCtx); err != nil {
+	if err := baseServer.Shutdown(shutdownCtx); err != nil { // Use baseServer.Shutdown()
 		log.Fatalf("Server forced to shutdown: %v", err)
 	}
 	log.Println("Player Data Service gracefully stopped.")
+}
+
+func startUsernameFiller(store *PlayerStore, mojangClient *MojangClient, interval time.Duration) {
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	log.Printf("Starting background username filler, checking every %v", interval)
+
+	for range ticker.C {
+		log.Println("Running username filler job...")
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+
+		filter := bson.M{"username": ""}
+		cursor, err := store.collection.Find(ctx, filter)
+		if err != nil {
+			log.Printf("Error finding players with empty usernames: %v", err)
+			cancel()
+			continue
+		}
+
+		var playersToUpdate []struct {
+			UUID string `bson:"_id"`
+		}
+		if err := cursor.All(ctx, &playersToUpdate); err != nil {
+			log.Printf("Error decoding players with empty usernames: %v", err)
+			cursor.Close(ctx)
+			cancel()
+			continue
+		}
+		cursor.Close(ctx)
+
+		if len(playersToUpdate) == 0 {
+			log.Println("No players with empty usernames found.")
+			cancel()
+			continue
+		}
+
+		log.Printf("Found %d players with empty usernames to process.", len(playersToUpdate))
+
+		for _, p := range playersToUpdate {
+			time.Sleep(100 * time.Millisecond)
+
+			username, mojangErr := mojangClient.GetUsernameByUUID(ctx, p.UUID)
+			if mojangErr != nil {
+				log.Printf("WARN: Username filler failed to fetch username for UUID %s: %v", p.UUID, mojangErr)
+				continue
+			}
+
+			if updateErr := store.UpdatePlayerUsername(ctx, p.UUID, username); updateErr != nil {
+				log.Printf("WARN: Username filler failed to update username for player %s in DB: %v", p.UUID, updateErr)
+			} else {
+				log.Printf("INFO: Username filler successfully updated username for player %s to %s.", p.UUID, username)
+			}
+		}
+		cancel()
+		log.Println("Username filler job finished.")
+	}
 }

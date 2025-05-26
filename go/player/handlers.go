@@ -1,14 +1,14 @@
-// go/player-data-service/handlers.go
 package main
 
 import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"time"
 
-	"github.com/Ftotnem/Backend/go/shared/models" // Import shared models
+	"github.com/Ftotnem/Backend/go/shared/api" // Corrected import path for your api package
 	"github.com/gorilla/mux"
 )
 
@@ -22,64 +22,40 @@ func NewPlayerService(store *PlayerStore) *PlayerService {
 	return &PlayerService{store: store}
 }
 
-// CreatePlayerHandler handles requests to create a new player.
-// POST /players
-func (ps *PlayerService) CreatePlayerHandler(w http.ResponseWriter, r *http.Request) {
-	var player models.Player
-	if err := json.NewDecoder(r.Body).Decode(&player); err != nil {
-		http.Error(w, "Invalid request body", http.StatusBadRequest)
-		return
-	}
-
-	if player.UUID == "" || player.Username == "" || player.Team == "" {
-		http.Error(w, "UUID, Username, and Team are required", http.StatusBadRequest)
-		return
-	}
-
-	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
-	defer cancel()
-
-	if err := ps.store.CreatePlayer(ctx, &player); err != nil {
-		// Differentiate between generic error and duplicate key error if you prefer
-		// For simplicity, we just return Internal Server Error here.
-		http.Error(w, "Failed to create player: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(player) // Return the created player data
-}
-
 // GetPlayerHandler handles requests to retrieve a player by UUID.
+// If the player is not found, it will create a new profile.
 // GET /players/{uuid}
+// Returns 200 OK if found, 201 Created if newly created.
 func (ps *PlayerService) GetPlayerHandler(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	uuid := vars["uuid"]
 	if uuid == "" {
-		http.Error(w, "Player UUID is required", http.StatusBadRequest)
+		api.WriteError(w, http.StatusBadRequest, "Player UUID is required") // Use api.WriteError
 		return
 	}
 
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
 
-	player, err := ps.store.GetPlayerByUUID(ctx, uuid)
+	player, created, err := ps.store.GetOrCreatePlayer(ctx, uuid)
 	if err != nil {
-		if err.Error() == fmt.Sprintf("player %s not found", uuid) {
-			http.Error(w, "Player not found", http.StatusNotFound)
-			return
-		}
-		http.Error(w, "Failed to retrieve player: "+err.Error(), http.StatusInternalServerError)
+		log.Printf("Error getting/creating player %s: %v", uuid, err)
+		api.WriteError(w, http.StatusInternalServerError, "Failed to get or create player profile: "+err.Error()) // Use api.WriteError
 		return
 	}
 
-	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(player)
+	statusCode := http.StatusOK
+	if created {
+		statusCode = http.StatusCreated // 201 Created if the player was new
+		log.Printf("Player %s created successfully and profile returned.", player.UUID)
+	} else {
+		log.Printf("Player %s found and profile returned.", player.UUID)
+	}
+	api.WriteJSON(w, statusCode, player) // Use api.WriteJSON
 }
 
 // UpdatePlayerPlaytimeHandler handles requests to update a player's playtime.
 // PUT /players/{uuid}/playtime
-// Request body: {"ticksToAdd": 100.5}
 type UpdatePlaytimeRequest struct {
 	TicksToSet float64 `json:"ticksToSet"`
 }
@@ -88,13 +64,13 @@ func (ps *PlayerService) UpdatePlayerPlaytimeHandler(w http.ResponseWriter, r *h
 	vars := mux.Vars(r)
 	uuid := vars["uuid"]
 	if uuid == "" {
-		http.Error(w, "Player UUID is required", http.StatusBadRequest)
+		api.WriteError(w, http.StatusBadRequest, "Player UUID is required")
 		return
 	}
 
 	var req UpdatePlaytimeRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		api.WriteError(w, http.StatusBadRequest, "Invalid request body")
 		return
 	}
 
@@ -104,20 +80,18 @@ func (ps *PlayerService) UpdatePlayerPlaytimeHandler(w http.ResponseWriter, r *h
 	err := ps.store.UpdatePlayerPlaytime(ctx, uuid, req.TicksToSet)
 	if err != nil {
 		if err.Error() == fmt.Sprintf("player %s not found for playtime update", uuid) {
-			http.Error(w, "Player not found", http.StatusNotFound)
+			api.WriteError(w, http.StatusNotFound, "Player not found")
 			return
 		}
-		http.Error(w, "Failed to update playtime: "+err.Error(), http.StatusInternalServerError)
+		api.WriteError(w, http.StatusInternalServerError, "Failed to update playtime: "+err.Error())
 		return
 	}
 
-	w.WriteHeader(http.StatusOK)
-	fmt.Fprintf(w, "Playtime updated for player %s\n", uuid)
+	api.WriteJSON(w, http.StatusOK, map[string]string{"message": fmt.Sprintf("Playtime updated for player %s", uuid)})
 }
 
-// UpdatePlayerDeltaPlaytimeHandler handles requests to update a player's delta playtime (ticks per tick).
-// PUT /players/{uuid}/playtime
-// Request body: {"deltaTicksToSet": 100.5}
+// UpdatePlayerDeltaPlaytimeHandler handles requests to update a player's delta playtime.
+// PUT /players/{uuid}/deltaplaytime
 type UpdateDeltaPlaytimeRequest struct {
 	TicksToSet float64 `json:"ticksToSet"`
 }
@@ -126,13 +100,13 @@ func (ps *PlayerService) UpdatePlayerDeltaPlaytimeHandler(w http.ResponseWriter,
 	vars := mux.Vars(r)
 	uuid := vars["uuid"]
 	if uuid == "" {
-		http.Error(w, "Player UUID is required", http.StatusBadRequest)
+		api.WriteError(w, http.StatusBadRequest, "Player UUID is required")
 		return
 	}
 
-	var req UpdatePlaytimeRequest
+	var req UpdateDeltaPlaytimeRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		api.WriteError(w, http.StatusBadRequest, "Invalid request body")
 		return
 	}
 
@@ -142,36 +116,34 @@ func (ps *PlayerService) UpdatePlayerDeltaPlaytimeHandler(w http.ResponseWriter,
 	err := ps.store.UpdatePlayerDeltaPlaytime(ctx, uuid, req.TicksToSet)
 	if err != nil {
 		if err.Error() == fmt.Sprintf("player %s not found for delta playtime update", uuid) {
-			http.Error(w, "Player not found", http.StatusNotFound)
+			api.WriteError(w, http.StatusNotFound, "Player not found")
 			return
 		}
-		http.Error(w, "Failed to update delta playtime: "+err.Error(), http.StatusInternalServerError)
+		api.WriteError(w, http.StatusInternalServerError, "Failed to update delta playtime: "+err.Error())
 		return
 	}
 
-	w.WriteHeader(http.StatusOK)
-	fmt.Fprintf(w, "Delta playtime updated for player %s\n", uuid)
+	api.WriteJSON(w, http.StatusOK, map[string]string{"message": fmt.Sprintf("Delta playtime updated for player %s", uuid)})
 }
 
 // UpdatePlayerBanStatusHandler handles requests to update a player's ban status.
 // PUT /players/{uuid}/ban
-// Request body: {"banned": true, "banExpiresAt": "2025-12-31T23:59:59Z"}
 type UpdateBanStatusRequest struct {
 	Banned       bool       `json:"banned"`
-	BanExpiresAt *time.Time `json:"banExpiresAt"` // Use pointer to allow null
+	BanExpiresAt *time.Time `json:"banExpiresAt"`
 }
 
 func (ps *PlayerService) UpdatePlayerBanStatusHandler(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	uuid := vars["uuid"]
 	if uuid == "" {
-		http.Error(w, "Player UUID is required", http.StatusBadRequest)
+		api.WriteError(w, http.StatusBadRequest, "Player UUID is required")
 		return
 	}
 
 	var req UpdateBanStatusRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		api.WriteError(w, http.StatusBadRequest, "Invalid request body")
 		return
 	}
 
@@ -181,13 +153,38 @@ func (ps *PlayerService) UpdatePlayerBanStatusHandler(w http.ResponseWriter, r *
 	err := ps.store.UpdatePlayerBanStatus(ctx, uuid, req.Banned, req.BanExpiresAt)
 	if err != nil {
 		if err.Error() == fmt.Sprintf("player %s not found for ban status update", uuid) {
-			http.Error(w, "Player not found", http.StatusNotFound)
+			api.WriteError(w, http.StatusNotFound, "Player not found")
 			return
 		}
-		http.Error(w, "Failed to update ban status: "+err.Error(), http.StatusInternalServerError)
+		api.WriteError(w, http.StatusInternalServerError, "Failed to update ban status: "+err.Error())
 		return
 	}
 
-	w.WriteHeader(http.StatusOK)
-	fmt.Fprintf(w, "Ban status updated for player %s\n", uuid)
+	api.WriteJSON(w, http.StatusOK, map[string]string{"message": fmt.Sprintf("Ban status updated for player %s", uuid)})
+}
+
+// UpdatePlayerLastLoginHandler handles requests to update only a player's last login timestamp.
+// PUT /players/{uuid}/lastlogin
+func (ps *PlayerService) UpdatePlayerLastLoginHandler(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	uuid := vars["uuid"]
+	if uuid == "" {
+		api.WriteError(w, http.StatusBadRequest, "Player UUID is required")
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+
+	err := ps.store.UpdatePlayerLastLogin(ctx, uuid)
+	if err != nil {
+		if err.Error() == fmt.Sprintf("player %s not found for last login update", uuid) {
+			api.WriteError(w, http.StatusNotFound, "Player not found")
+			return
+		}
+		api.WriteError(w, http.StatusInternalServerError, "Failed to update last login: "+err.Error())
+		return
+	}
+
+	api.WriteJSON(w, http.StatusOK, map[string]string{"message": fmt.Sprintf("Last login updated for player %s", uuid)})
 }
