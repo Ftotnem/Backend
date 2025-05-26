@@ -1,0 +1,7 @@
+go 1.24.2
+
+use (
+	./go/player
+	./go/shared/api
+	./go/shared/models
+)
