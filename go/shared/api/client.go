@@ -1,5 +1,5 @@
 // go/shared/http/client.go
-package http
+package api
 
 import (
 	"bytes"

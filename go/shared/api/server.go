@@ -1,5 +1,5 @@
 // go/shared/http/server.go
-package http
+package api
 
 import (
 	"context"

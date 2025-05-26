@@ -10,7 +10,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/Ftotnem/Backend/go/shared/api" // Corrected import path for your api package
+	"github.com/Ftotnem/Backend/go/shared/api"
 	"go.mongodb.org/mongo-driver/bson"
 )
 

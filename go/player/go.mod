@@ -3,6 +3,8 @@ module github.com/Ftotnem/Backend/go/player
 go 1.24.2
 
 require (
+	github.com/Ftotnem/Backend/go/shared/api v0.0.0-20250526214236-13e119d8f915
+	github.com/Ftotnem/Backend/go/shared/models v0.0.0-20250526214236-13e119d8f915
 	github.com/gorilla/mux v1.8.1
 	go.mongodb.org/mongo-driver v1.17.3
 )
