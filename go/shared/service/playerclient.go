@@ -1,28 +1,26 @@
-// File: github.com/Ftotnem/Backend/go/shared/service/profileservice/client.go
 package service
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
-	"net/http"
+	"net/http" // Required for http.StatusNotFound
 	"time"
 
-	"github.com/google/uuid" // Assuming you use google/uuid for UUIDs
+	"github.com/Ftotnem/Backend/go/shared/api"    // Import the shared API client
+	"github.com/Ftotnem/Backend/go/shared/models" // Import the shared Player model
+	"github.com/google/uuid"                      // Assuming you use google/uuid for UUIDs
 )
 
-// Player represents the player data structure returned by the player-service.
-// This should mirror the structure of your Player model in player-service.
-type Player struct {
-	UUID          string     `json:"uuid" bson:"_id"`
-	Username      string     `json:"username" bson:"username"`
-	PlaytimeTicks float64    `json:"playtimeTicks" bson:"playtimeTicks"`
-	Banned        bool       `json:"banned" bson:"banned"`
-	BanExpiresAt  *time.Time `json:"banExpiresAt" bson:"banExpiresAt"`
-	LastLogin     time.Time  `json:"lastLogin" bson:"lastLogin"`
-	CreatedAt     time.Time  `json:"createdAt" bson:"createdAt"`
-	UpdatedAt     time.Time  `json:"updatedAt" bson:"updatedAt"`
+// PlayerServiceClient is a client for the Player Data Service.
+type PlayerServiceClient struct {
+	apiClient *api.Client
+}
+
+// NewPlayerClient creates a new Player Data Service client.
+func NewPlayerClient(baseURL string) *PlayerServiceClient {
+	return &PlayerServiceClient{
+		apiClient: api.NewClient(baseURL, 5*time.Second), // Use the shared API client with a timeout
+	}
 }
 
 // UpdateBanStatusRequest is the structure for the request body for updating ban status.
@@ -32,103 +30,70 @@ type UpdateBanStatusRequest struct {
 	BanExpiresAt *time.Time `json:"banExpiresAt"`
 }
 
-// GetPlayer fetches a player's profile by UUID.
-// GET /players/{uuid}
-func (c *Client) GetPlayer(ctx context.Context, playerUUID uuid.UUID) (*Player, error) {
-	url := fmt.Sprintf("%s/players/%s", c.baseURL, playerUUID.String())
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create request for GetPlayer: %w", err)
-	}
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("failed to send request to %s: %w", url, err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
-		var errorResponse struct {
-			Message string `json:"message"`
-		}
-		if decodeErr := json.NewDecoder(resp.Body).Decode(&errorResponse); decodeErr == nil && errorResponse.Message != "" {
-			return nil, fmt.Errorf("received non-OK status code from %s: %d - %s", url, resp.StatusCode, errorResponse.Message)
-		}
-		return nil, fmt.Errorf("received non-OK status code from %s: %d", url, resp.StatusCode)
-	}
-
-	var player Player
-	if err := json.NewDecoder(resp.Body).Decode(&player); err != nil {
-		return nil, fmt.Errorf("failed to decode player response from %s: %w", url, err)
-	}
-
-	return &player, nil
+// UpdatePlaytimeRequest is the structure for updating playtime.
+type UpdatePlaytimeRequest struct {
+	TicksToSet float64 `json:"ticksToSet"` // Matches the server-side field name
 }
 
-// UpdatePlayerBanStatus sends a PUT request to update a player's ban status.
-// PUT /players/{uuid}/ban
-func (c *Client) UpdatePlayerBanStatus(ctx context.Context, playerUUID uuid.UUID, banned bool, banExpiresAt *time.Time) error {
+// UpdateDeltaPlaytimeRequest is the structure for updating delta playtime.
+type UpdateDeltaPlaytimeRequest struct {
+	TicksToSet float64 `json:"ticksToSet"` // Matches the server-side field name
+}
+
+// CreateProfileRequest is the structure for creating a new player profile.
+// This directly maps to the server's CreateProfileRequest.
+type CreateProfileRequest struct {
+	UUID string `json:"uuid"`
+}
+
+// GetProfile fetches a player's profile by UUID.
+// GET /profiles/{uuid}
+// Returns *models.Player if found, nil and error if not found or other issue.
+// Specifically returns api.ErrNotFound if the profile does not exist (HTTP 404).
+func (c *PlayerServiceClient) GetProfile(ctx context.Context, playerUUID uuid.UUID) (*models.Player, error) {
+	profile := &models.Player{}
+	err := c.apiClient.Get(ctx, fmt.Sprintf("/profiles/%s", playerUUID.String()), profile)
+	if err != nil {
+		// Check if the error indicates a 404 Not Found
+		if apiErr, ok := err.(*api.HTTPError); ok && apiErr.StatusCode == http.StatusNotFound {
+			return nil, fmt.Errorf("%w: player profile %s", api.ErrNotFound, playerUUID.String()) // Wrap with a specific error
+		}
+		return nil, fmt.Errorf("failed to get player profile %s: %w", playerUUID.String(), err)
+	}
+	return profile, nil
+}
+
+// UpdateProfileBanStatus sends a PUT request to update a player profile's ban status.
+// PUT /profiles/{uuid}/ban
+func (c *PlayerServiceClient) UpdateProfileBanStatus(ctx context.Context, playerUUID uuid.UUID, banned bool, banExpiresAt *time.Time) error {
 	reqData := UpdateBanStatusRequest{
 		Banned:       banned,
 		BanExpiresAt: banExpiresAt,
 	}
-
-	jsonData, err := json.Marshal(reqData)
-	if err != nil {
-		return fmt.Errorf("failed to marshal JSON for UpdatePlayerBanStatus: %w", err)
-	}
-
-	url := fmt.Sprintf("%s/players/%s/ban", c.baseURL, playerUUID.String())
-	req, err := http.NewRequestWithContext(ctx, http.MethodPut, url, bytes.NewBuffer(jsonData))
-	if err != nil {
-		return fmt.Errorf("failed to create request for UpdatePlayerBanStatus: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return fmt.Errorf("failed to send request to %s: %w", url, err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		var errorResponse struct {
-			Message string `json:"message"`
-		}
-		if decodeErr := json.NewDecoder(resp.Body).Decode(&errorResponse); decodeErr == nil && errorResponse.Message != "" {
-			return fmt.Errorf("received non-OK status code from %s: %d - %s", url, resp.StatusCode, errorResponse.Message)
-		}
-		return fmt.Errorf("received non-OK status code from %s: %d", url, resp.StatusCode)
-	}
-
-	return nil
+	return c.apiClient.Put(ctx, fmt.Sprintf("/profiles/%s/ban", playerUUID.String()), reqData, nil)
 }
 
-// UpdatePlayerLastLogin sends a PUT request to update a player's last login timestamp.
-// PUT /players/{uuid}/lastlogin
-func (c *Client) UpdatePlayerLastLogin(ctx context.Context, playerUUID uuid.UUID) error {
-	url := fmt.Sprintf("%s/players/%s/lastlogin", c.baseURL, playerUUID.String())
-	req, err := http.NewRequestWithContext(ctx, http.MethodPut, url, nil) // No body needed for lastlogin update
-	if err != nil {
-		return fmt.Errorf("failed to create request for UpdatePlayerLastLogin: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/json") // Still good practice to set this
+// UpdateProfileLastLogin sends a PUT request to update a player profile's last login timestamp.
+// PUT /profiles/{uuid}/lastlogin
+func (c *PlayerServiceClient) UpdateProfileLastLogin(ctx context.Context, playerUUID uuid.UUID) error {
+	// No request body is needed for this endpoint as the server generates the timestamp.
+	return c.apiClient.Put(ctx, fmt.Sprintf("/profiles/%s/lastlogin", playerUUID.String()), nil, nil)
+}
 
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return fmt.Errorf("failed to send request to %s: %w", url, err)
+// UpdateProfilePlaytime sends a PUT request to update a player profile's total playtime.
+// PUT /profiles/{uuid}/playtime
+func (c *PlayerServiceClient) UpdateProfilePlaytime(ctx context.Context, playerUUID uuid.UUID, playtimeTicks float64) error {
+	reqData := UpdatePlaytimeRequest{
+		TicksToSet: playtimeTicks,
 	}
-	defer resp.Body.Close()
+	return c.apiClient.Put(ctx, fmt.Sprintf("/profiles/%s/playtime", playerUUID.String()), reqData, nil)
+}
 
-	if resp.StatusCode != http.StatusOK {
-		var errorResponse struct {
-			Message string `json:"message"`
-		}
-		if decodeErr := json.NewDecoder(resp.Body).Decode(&errorResponse); decodeErr == nil && errorResponse.Message != "" {
-			return fmt.Errorf("received non-OK status code from %s: %d - %s", url, resp.StatusCode, errorResponse.Message)
-		}
-		return fmt.Errorf("received non-OK status code from %s: %d", url, resp.StatusCode)
+// UpdateProfileDeltaPlaytime sends a PUT request to update a player profile's delta playtime.
+// PUT /profiles/{uuid}/deltaplaytime
+func (c *PlayerServiceClient) UpdateProfileDeltaPlaytime(ctx context.Context, playerUUID uuid.UUID, deltaPlaytimeTicks float64) error {
+	reqData := UpdateDeltaPlaytimeRequest{
+		TicksToSet: deltaPlaytimeTicks,
 	}
-
-	return nil
+	return c.apiClient.Put(ctx, fmt.Sprintf("/profiles/%s/deltaplaytime", playerUUID.String()), reqData, nil)
 }

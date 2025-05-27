@@ -1,3 +1,4 @@
+// file backend/go/shared/models/player.go
 package models
 
 import (

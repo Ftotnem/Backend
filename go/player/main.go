@@ -3,7 +3,7 @@ package main
 import (
 	"context"
 	"log"
-	"net/http" // Keep http for http.ErrServerClosed
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
@@ -38,19 +38,19 @@ func main() {
 
 	go startUsernameFiller(playerStore, mojangClient, 1*time.Minute)
 
-	// Use your new BaseServer from the shared API module
 	baseServer := api.NewBaseServer(cfg.ListenAddr)
 
 	// Register your handlers on the BaseServer's router
-	baseServer.Router.HandleFunc("/players/{uuid}", playerService.GetPlayerHandler).Methods("GET")
-	baseServer.Router.HandleFunc("/players/{uuid}/playtime", playerService.UpdatePlayerPlaytimeHandler).Methods("PUT")
-	baseServer.Router.HandleFunc("/players/{uuid}/deltaplaytime", playerService.UpdatePlayerDeltaPlaytimeHandler).Methods("PUT")
-	baseServer.Router.HandleFunc("/players/{uuid}/ban", playerService.UpdatePlayerBanStatusHandler).Methods("PUT")
-	baseServer.Router.HandleFunc("/players/{uuid}/lastlogin", playerService.UpdatePlayerLastLoginHandler).Methods("PUT")
+	baseServer.Router.HandleFunc("/profiles", playerService.CreateProfileHandler).Methods("POST")
+	baseServer.Router.HandleFunc("/profiles/{uuid}", playerService.GetProfileHandler).Methods("GET")
+	baseServer.Router.HandleFunc("/profiles/{uuid}/playtime", playerService.UpdateProfilePlaytimeHandler).Methods("PUT")
+	baseServer.Router.HandleFunc("/profiles/{uuid}/deltaplaytime", playerService.UpdateProfileDeltaPlaytimeHandler).Methods("PUT")
+	baseServer.Router.HandleFunc("/profiles/{uuid}/ban", playerService.UpdateProfileBanStatusHandler).Methods("PUT")
+	baseServer.Router.HandleFunc("/profiles/{uuid}/lastlogin", playerService.UpdateProfileLastLoginHandler).Methods("PUT")
 
 	go func() {
 		log.Printf("Player Data Service listening on %s", cfg.ListenAddr)
-		if err := baseServer.Start(); err != nil && err != http.ErrServerClosed { // Use baseServer.Start()
+		if err := baseServer.Start(); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("Could not listen on %s: %v", cfg.ListenAddr, err)
 		}
 	}()
@@ -64,7 +64,7 @@ func main() {
 	shutdownCtx, cancelShutdown := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancelShutdown()
 
-	if err := baseServer.Shutdown(shutdownCtx); err != nil { // Use baseServer.Shutdown()
+	if err := baseServer.Shutdown(shutdownCtx); err != nil {
 		log.Fatalf("Server forced to shutdown: %v", err)
 	}
 	log.Println("Player Data Service gracefully stopped.")
@@ -83,32 +83,32 @@ func startUsernameFiller(store *PlayerStore, mojangClient *MojangClient, interva
 		filter := bson.M{"username": ""}
 		cursor, err := store.collection.Find(ctx, filter)
 		if err != nil {
-			log.Printf("Error finding players with empty usernames: %v", err)
+			log.Printf("Error finding profiles with empty usernames: %v", err)
 			cancel()
 			continue
 		}
 
-		var playersToUpdate []struct {
+		var profilesToUpdate []struct {
 			UUID string `bson:"_id"`
 		}
-		if err := cursor.All(ctx, &playersToUpdate); err != nil {
-			log.Printf("Error decoding players with empty usernames: %v", err)
+		if err := cursor.All(ctx, &profilesToUpdate); err != nil {
+			log.Printf("Error decoding profiles with empty usernames: %v", err)
 			cursor.Close(ctx)
 			cancel()
 			continue
 		}
 		cursor.Close(ctx)
 
-		if len(playersToUpdate) == 0 {
-			log.Println("No players with empty usernames found.")
+		if len(profilesToUpdate) == 0 {
+			log.Println("No profiles with empty usernames found.")
 			cancel()
 			continue
 		}
 
-		log.Printf("Found %d players with empty usernames to process.", len(playersToUpdate))
+		log.Printf("Found %d profiles with empty usernames to process.", len(profilesToUpdate))
 
-		for _, p := range playersToUpdate {
-			time.Sleep(100 * time.Millisecond)
+		for _, p := range profilesToUpdate {
+			time.Sleep(100 * time.Millisecond) // Be nice to Mojang API
 
 			username, mojangErr := mojangClient.GetUsernameByUUID(ctx, p.UUID)
 			if mojangErr != nil {
@@ -116,10 +116,10 @@ func startUsernameFiller(store *PlayerStore, mojangClient *MojangClient, interva
 				continue
 			}
 
-			if updateErr := store.UpdatePlayerUsername(ctx, p.UUID, username); updateErr != nil {
-				log.Printf("WARN: Username filler failed to update username for player %s in DB: %v", p.UUID, updateErr)
+			if updateErr := store.UpdateProfileUsername(ctx, p.UUID, username); updateErr != nil {
+				log.Printf("WARN: Username filler failed to update username for profile %s in DB: %v", p.UUID, updateErr)
 			} else {
-				log.Printf("INFO: Username filler successfully updated username for player %s to %s.", p.UUID, username)
+				log.Printf("INFO: Username filler successfully updated username for profile %s to %s.", p.UUID, username)
 			}
 		}
 		cancel()
