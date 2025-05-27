@@ -62,7 +62,7 @@ func (ps *PlayerStore) CreateProfile(ctx context.Context, playerUUID string) (*m
 		Username:           "", // Placeholder, will be filled by Mojang API
 		Team:               assignedTeam,
 		TotalPlaytimeTicks: 0.0,
-		DeltaPlaytimeTicks: 0.0,
+		DeltaPlaytimeTicks: 1.0,
 		Banned:             false,
 		CreatedAt:          &now,
 		LastLoginAt:        &now,

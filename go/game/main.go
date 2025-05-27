@@ -9,22 +9,19 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/Ftotnem/Backend/go/shared/api" // Import your shared API module
+	"github.com/Ftotnem/Backend/go/shared/api"
+	"github.com/Ftotnem/Backend/go/shared/service"
 )
 
 func main() {
-	// Load configuration
 	cfg, err := LoadConfig()
 	if err != nil {
 		log.Fatalf("Failed to load configuration: %v", err)
 	}
-	log.Printf("Configuration loaded: ListenAddr=%s, RedisAddr=%s, TickInterval=%v, PersistenceInterval=%v, RedisOnlineTTL=%v, InstanceID=%d, TotalInstances=%d",
-		cfg.ListenAddr, cfg.RedisAddr, cfg.TickInterval, cfg.PersistenceInterval, cfg.RedisOnlineTTL, cfg.GameServiceInstanceID, cfg.TotalGameServiceInstances)
 
-	// Initialize Redis Client
-	redisClient, err := NewRedisClient(cfg.RedisAddr, cfg.RedisOnlineTTL)
+	redisClient, err := NewRedisClient(cfg.RedisAddrs, cfg.RedisOnlineTTL)
 	if err != nil {
-		log.Fatalf("Failed to initialize Redis client: %v", err)
+		log.Fatalf("Failed to connect to Redis: %v", err)
 	}
 	defer func() {
 		if err := redisClient.Close(); err != nil {
@@ -33,32 +30,32 @@ func main() {
 			log.Println("Redis client closed.")
 		}
 	}()
-	log.Println("Successfully connected to Redis.")
 
-	// Initialize GameService (HTTP handlers)
-	gameService := NewGameService(redisClient, cfg)
+	playerServiceClient := service.NewPlayerClient(cfg.PlayerServiceURL)
 
-	// Use your new BaseServer from the shared API module
+	gameService := NewGameService(redisClient, playerServiceClient, cfg)
+
+	log.Printf("DEBUG: Configured TickInterval before updater start: %v", cfg.TickInterval)
+	// --- NEW: Initialize and Start GameUpdater ---
+	gameUpdater := NewGameUpdater(redisClient, cfg)
+	go gameUpdater.Start()   // Run the updater in a separate goroutine
+	defer gameUpdater.Stop() // Ensure it stops on shutdown
+
 	baseServer := api.NewBaseServer(cfg.ListenAddr)
 
-	// Register game-service specific handlers on the BaseServer's router
+	// Register your handlers on the BaseServer's router
 	baseServer.Router.HandleFunc("/game/online", gameService.HandleOnline).Methods("POST")
 	baseServer.Router.HandleFunc("/game/offline", gameService.HandleOffline).Methods("POST")
 	baseServer.Router.HandleFunc("/game/teams/total", gameService.GetTeamTotals).Methods("GET")
-	baseServer.Router.HandleFunc("/game/players/{uuid}/online", gameService.GetPlayerOnlineStatus).Methods("GET") // Optional: for checking individual player status
-
+	baseServer.Router.HandleFunc("/game/player/{uuid}/online", gameService.GetPlayerOnlineStatus).Methods("GET")
 	baseServer.Router.HandleFunc("/game/ban", gameService.HandleBanPlayer).Methods("POST")
 	baseServer.Router.HandleFunc("/game/unban", gameService.HandleUnbanPlayer).Methods("POST")
 
-	// TODO: Initialize and start the tick-based updater goroutine here
-	// go StartUpdater(context.Background(), redisClient, cfg)
-	// log.Println("Tick-based updater started.")
+	// --- NEW: Register playtime and deltatime endpoints ---
+	baseServer.Router.HandleFunc("/playtime/{uuid}", gameService.handleGetPlaytime).Methods("GET")
+	baseServer.Router.HandleFunc("/deltatime/{uuid}", gameService.handleGetDeltaPlaytime).Methods("GET")
+	// --- END NEW ---
 
-	// TODO: Initialize and start the periodic persister goroutine here
-	// go StartPersister(context.Background(), redisClient, mongoClient, cfg)
-	// log.Println("Periodic persister started.")
-
-	// Start HTTP Server in a goroutine
 	go func() {
 		log.Printf("Game Service listening on %s", cfg.ListenAddr)
 		if err := baseServer.Start(); err != nil && err != http.ErrServerClosed {
@@ -66,7 +63,6 @@ func main() {
 		}
 	}()
 
-	// Graceful Shutdown
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 

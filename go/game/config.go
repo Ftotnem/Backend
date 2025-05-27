@@ -4,33 +4,33 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 )
 
 // Config holds all the necessary configuration for the game-service.
 type Config struct {
 	ListenAddr                string        // Address for the HTTP server (e.g., ":8082")
-	RedisAddr                 string        // Redis server address (e.g., "127.0.0.1:7000")
+	RedisAddrs                []string      // Redis server address (e.g., "127.0.0.1:7000")
 	TickInterval              time.Duration // Duration for the game tick (e.g., 50ms)
 	PersistenceInterval       time.Duration // Duration for periodic MongoDB persistence (e.g., 1m)
 	RedisOnlineTTL            time.Duration // TTL for 'online:<uuid>' keys in Redis (e.g., 15s)
 	GameServiceInstanceID     int           // Unique identifier for this game service instance (e.g., 0, 1, 2)
 	TotalGameServiceInstances int           // Total number of active game service instances (e.g., 1, 3)
+	PlayerServiceURL          string        // The url to the used player-service
 }
 
 // LoadConfig loads configuration from environment variables, applying defaults if not set.
 // It returns a Config struct or an error if any required variable is missing or invalid.
 func LoadConfig() (*Config, error) {
 	cfg := &Config{
-		ListenAddr: os.Getenv("GAME_SERVICE_LISTEN_ADDR"),
-		RedisAddr:  os.Getenv("REDIS_ADDR"),
+		ListenAddr:       os.Getenv("GAME_SERVICE_LISTEN_ADDR"),
+		PlayerServiceURL: os.Getenv("PLAYERS_SERVICE_URL"),
 	}
 
 	var err error
 
 	// --- Load Duration fields ---
-	// Using a helper for durations, similar to your original design, to handle parsing errors.
-	// Defaults will be applied if the env var is not set OR if parsing fails.
 	getDuration := func(envKey string, defaultVal time.Duration) (time.Duration, error) {
 		valStr := os.Getenv(envKey)
 		if valStr == "" {
@@ -59,8 +59,6 @@ func LoadConfig() (*Config, error) {
 	}
 
 	// --- Load Int fields ---
-	// Using a helper for integers, similar to your original design, to handle parsing errors.
-	// Defaults will be applied if the env var is not set OR if parsing fails.
 	getInt := func(envKey string, defaultVal int) (int, error) {
 		valStr := os.Getenv(envKey)
 		if valStr == "" {
@@ -83,14 +81,35 @@ func LoadConfig() (*Config, error) {
 		return nil, err
 	}
 
+	// --- Load Redis Cluster Addresses ---
+	redisAddrsStr := os.Getenv("REDIS_ADDRS") // New environment variable name, plural for clarity
+	if redisAddrsStr == "" {
+		// Default for a common local Redis Cluster setup (e.g., 6 nodes: 7000-7005)
+		// It's sufficient to list a few seed nodes, the client will discover the rest.
+		cfg.RedisAddrs = []string{
+			"127.0.0.1:7000",
+			"127.0.0.1:7001",
+			"127.0.0.1:7002",
+			"127.0.0.1:7003",
+			"127.0.0.1:7004",
+			"127.0.0.1:7005",
+		}
+	} else {
+		// Split the comma-separated string into a slice of addresses
+		cfg.RedisAddrs = strings.Split(redisAddrsStr, ",")
+		// Optionally, trim spaces from each address
+		for i, addr := range cfg.RedisAddrs {
+			cfg.RedisAddrs[i] = strings.TrimSpace(addr)
+		}
+	}
+
 	// --- Apply string defaults directly ---
 	if cfg.ListenAddr == "" {
 		cfg.ListenAddr = ":8082" // Default HTTP listen address
 	}
-	if cfg.RedisAddr == "" {
-		// For a local Redis cluster, you'd typically connect to one of the masters (e.g., 7000)
-		// and the client library (like go-redis) would handle cluster redirection.
-		cfg.RedisAddr = "127.0.0.1:7000" // Default Redis address for local cluster
+
+	if cfg.PlayerServiceURL == "" {
+		cfg.PlayerServiceURL = "http://localhost:8081" // Corrected URL scheme
 	}
 
 	// --- Final validation for instance IDs (important even with defaults) ---
