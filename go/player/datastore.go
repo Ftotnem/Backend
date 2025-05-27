@@ -19,14 +19,16 @@ import (
 type PlayerStore struct {
 	collection   *mongo.Collection
 	mojangClient *MojangClient
+	teamStore    *TeamStore
 }
 
 // NewPlayerStore creates a new PlayerStore instance.
-func NewPlayerStore(client *mongo.Client, databaseName, collectionName string, mojangClient *MojangClient) *PlayerStore {
+func NewPlayerStore(client *mongo.Client, databaseName, collectionName string, mojangClient *MojangClient, teamStore *TeamStore) *PlayerStore {
 	collection := client.Database(databaseName).Collection(collectionName)
 	return &PlayerStore{
 		collection:   collection,
 		mojangClient: mojangClient,
+		teamStore:    teamStore,
 	}
 }
 
@@ -54,8 +56,50 @@ func ConnectMongoDB(connStr string) (*mongo.Client, error) {
 // This function also initializes default fields and attempts to fetch the username.
 func (ps *PlayerStore) CreateProfile(ctx context.Context, playerUUID string) (*models.Player, error) {
 	now := time.Now()
-	teams := []string{"AQUA_CREEPERS", "PURPLE_SWORDERS"}
-	assignedTeam := teams[rand.Intn(len(teams))]
+	allTeams := []string{"AQUA_CREEPERS", "PURPLE_SWORDERS"}
+
+	// Determine the team with the least players
+	var assignedTeam string
+	minPlayers := int64(-1) // Initialize with a value that any real count will be less than
+
+	// Fetch player counts for all teams
+	teamCounts := make(map[string]int64)
+	for _, teamName := range allTeams {
+		count, err := ps.teamStore.GetTeamPlayerCount(ctx, teamName)
+		if err != nil {
+			// Log warning but proceed, default to random if counts can't be fetched
+			log.Printf("WARN: Could not retrieve player count for team %s: %v. Falling back to random assignment if other teams also fail.", teamName, err)
+			teamCounts[teamName] = -1 // Indicate an error, effectively making it undesirable
+		} else {
+			teamCounts[teamName] = count
+		}
+	}
+
+	// Find the team with the minimum number of players
+	leastPopulatedTeams := []string{}
+	for _, teamName := range allTeams {
+		count := teamCounts[teamName]
+		if count == -1 { // Skip teams that failed to fetch
+			continue
+		}
+
+		if minPlayers == -1 || count < minPlayers {
+			minPlayers = count
+			leastPopulatedTeams = []string{teamName} // Start new list if a new minimum is found
+		} else if count == minPlayers {
+			leastPopulatedTeams = append(leastPopulatedTeams, teamName) // Add to list if tied
+		}
+	}
+
+	if len(leastPopulatedTeams) > 0 {
+		// If there are teams to choose from, pick one randomly from the least populated
+		assignedTeam = leastPopulatedTeams[rand.Intn(len(leastPopulatedTeams))]
+		log.Printf("INFO: Assigned player %s to team %s (least populated).", playerUUID, assignedTeam)
+	} else {
+		// Fallback: if no team counts could be fetched (e.g., all failed), assign randomly
+		assignedTeam = allTeams[rand.Intn(len(allTeams))]
+		log.Printf("WARN: Could not determine least populated team. Assigned player %s to team %s randomly.", playerUUID, assignedTeam)
+	}
 
 	newProfile := &models.Player{
 		UUID:               playerUUID,
@@ -77,6 +121,15 @@ func (ps *PlayerStore) CreateProfile(ctx context.Context, playerUUID string) (*m
 	}
 
 	log.Printf("Player profile %s created successfully with default values.", playerUUID)
+
+	// Increment the player count for the assigned team
+	go func(team string) {
+		teamCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := ps.teamStore.IncrementTeamPlayerCount(teamCtx, team); err != nil {
+			log.Printf("ERROR: Failed to increment player count for team %s after creating profile %s: %v", team, playerUUID, err)
+		}
+	}(assignedTeam)
 
 	// Asynchronously fetch username for the newly created profile
 	go func(uuid string) {

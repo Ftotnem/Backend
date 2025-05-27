@@ -11,6 +11,7 @@ type Config struct {
 	MongoDBConnStr           string // MongoDB connection string
 	MongoDBDatabase          string // MongoDB database name (e.g., "minecraft_events")
 	MongoDBPlayersCollection string // MongoDB collection for players (e.g., "players")
+	MongoDBTeamCollection    string // MongoDB collection for team related info
 }
 
 // LoadConfig loads configuration from environment variables.
@@ -21,6 +22,7 @@ func LoadConfig() (*Config, error) {
 		MongoDBConnStr:           os.Getenv("MONGODB_CONN_STR"),
 		MongoDBDatabase:          os.Getenv("MONGODB_DATABASE"),
 		MongoDBPlayersCollection: os.Getenv("MONGODB_PLAYERS_COLLECTION"),
+		MongoDBTeamCollection:    os.Getenv("MONGODB_TEAM_COLLECTION"),
 	}
 
 	// Set defaults if environment variables are not provided
@@ -35,6 +37,9 @@ func LoadConfig() (*Config, error) {
 	}
 	if cfg.MongoDBPlayersCollection == "" {
 		cfg.MongoDBPlayersCollection = "players" // Default collection name
+	}
+	if cfg.MongoDBTeamCollection == "" {
+		cfg.MongoDBTeamCollection = "teams" // Default collection name
 	}
 
 	return cfg, nil

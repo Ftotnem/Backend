@@ -11,8 +11,8 @@ import (
 
 	"github.com/Ftotnem/Backend/go/shared/api"     // Import your shared API module as 'api'
 	"github.com/Ftotnem/Backend/go/shared/service" // Import the shared service client
-	"github.com/google/uuid"                       // Required for parsing UUIDs
 	"github.com/gorilla/mux"                       // Still needed for mux.Vars
+	"go.minekube.com/gate/pkg/util/uuid"           // Required for parsing UUIDs
 	"go.mongodb.org/mongo-driver/mongo"            // To check for ErrNoDocuments
 )
 

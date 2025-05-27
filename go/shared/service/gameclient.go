@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/Ftotnem/Backend/go/shared/api" // Import the shared API client
-	"github.com/google/uuid"                   // Assuming you use google/uuid for UUIDs
+	"go.minekube.com/gate/pkg/util/uuid"       // Assuming you use google/uuid for UUIDs
 )
 
 // Client is a client for the Game Service.

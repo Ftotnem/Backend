@@ -33,7 +33,15 @@ func main() {
 
 	mojangClient := NewMojangClient()
 
-	playerStore := NewPlayerStore(mongoClient, cfg.MongoDBDatabase, cfg.MongoDBPlayersCollection, mojangClient)
+	// Initialize TeamStore
+	teamStore := NewTeamStore(mongoClient, cfg.MongoDBDatabase, cfg.MongoDBTeamCollection)
+
+	// Ensure default teams exist in the database
+	defaultTeams := []string{"AQUA_CREEPERS", "PURPLE_SWORDERS"}
+	if err := teamStore.EnsureTeamsExist(context.Background(), defaultTeams); err != nil {
+		log.Fatalf("Failed to ensure default teams exist: %v", err)
+	}
+	playerStore := NewPlayerStore(mongoClient, cfg.MongoDBDatabase, cfg.MongoDBPlayersCollection, mojangClient, teamStore)
 	playerService := NewPlayerService(playerStore)
 
 	go startUsernameFiller(playerStore, mojangClient, 1*time.Minute)

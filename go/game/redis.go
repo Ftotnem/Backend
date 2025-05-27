@@ -6,6 +6,7 @@ import (
 	"log"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/redis/go-redis/v9" // Import the go-redis library
@@ -318,31 +319,33 @@ func (rc *RedisClient) GetTeamTotalPlaytime(ctx context.Context, teamID string) 
 // In redisclient.go (GetAllOnlineUUIDs)
 func (rc *RedisClient) GetAllOnlineUUIDs(ctx context.Context) ([]string, error) {
 	var allOnlineUUIDs []string
+	var mu sync.Mutex // Declare a Mutex to protect allOnlineUUIDs
 
-	// The pattern needs to be without a hash tag for a cluster-wide scan
-	// So it should be `online:*` to match `online:{uuid}:`
-	scanPattern := strings.Replace(OnlineKeyPrefix, "{%s}:", "*", 1) // Converts "online:{%s}:" to "online:*:*" or "online:*" based on final form
-	if !strings.HasSuffix(scanPattern, "*") {
-		scanPattern += "*" // Ensure it ends with a wildcard to match anything after 'online:'
-	}
-	// Corrected to handle the specific format `online:{uuid}:`
-	// We want to scan for "online:*" and then filter
-	scanPattern = "online:*" // This will match online:{uuid}:
+	scanPattern := "online:*"
 
-	// Iterate over each master node in the cluster
-	// go-redis ClusterClient.ForEachMaster is the way to do this
 	err := rc.client.ForEachMaster(ctx, func(ctx context.Context, client *redis.Client) error {
-		iter := client.Scan(ctx, 0, scanPattern, 0).Iterator() // Run SCAN on this specific master node
+		// Defensive check: Ensure client is not nil, as discussed before.
+		if client == nil {
+			log.Printf("ERROR: ForEachMaster provided a NIL Redis client for node. Skipping this node.")
+			return nil // Return nil error to continue processing other masters, or return specific error
+		}
+
+		iter := client.Scan(ctx, 0, scanPattern, 0).Iterator()
 
 		for iter.Next(ctx) {
 			key := iter.Val()
 
-			// Extract UUID from the key "online:{uuid}:"
 			start := strings.Index(key, "{")
 			end := strings.Index(key, "}")
 			if start != -1 && end != -1 && end > start {
 				uuid := key[start+1 : end]
-				allOnlineUUIDs = append(allOnlineUUIDs, uuid)
+
+				// --- CRITICAL CHANGE: Use a mutex to protect the append operation ---
+				mu.Lock()                                     // Lock before modifying the shared slice
+				allOnlineUUIDs = append(allOnlineUUIDs, uuid) // Line 345 was here!
+				mu.Unlock()                                   // Unlock after modification
+				// --- END CRITICAL CHANGE ---
+
 			} else {
 				log.Printf("WARN in GetAllOnlineUUIDs (Node %s): Could not parse UUID from key: %s", client.Options().Addr, key)
 			}
