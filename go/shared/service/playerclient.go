@@ -8,7 +8,7 @@ import (
 
 	"github.com/Ftotnem/Backend/go/shared/api"    // Import the shared API client
 	"github.com/Ftotnem/Backend/go/shared/models" // Import the shared Player model
-	"github.com/google/uuid"                      // Assuming you use google/uuid for UUIDs
+	"go.minekube.com/gate/pkg/util/uuid"          // Assuming you use google/uuid for UUIDs
 )
 
 // PlayerServiceClient is a client for the Player Data Service.
