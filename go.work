@@ -5,4 +5,5 @@ use (
 	./go/player
 	./go/shared/api
 	./go/shared/models
+	./go/shared/service
 )
