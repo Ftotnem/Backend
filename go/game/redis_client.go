@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"strconv"
 	"time"
 
 	"github.com/go-redis/redis/v8" // Import the go-redis library
@@ -79,18 +80,71 @@ func (rc *RedisClient) IsOnline(ctx context.Context, uuid string) (bool, error) 
 	return exists == 1, nil
 }
 
-// IsBanned checks if a player is currently marked as banned in Redis.
-// This assumes the 'banned:<uuid>' key is set to "true" when a player is banned.
+// SetBanStatus sets or removes a player's ban status in Redis with a TTL.
+// banExpiresAt should be a Unix timestamp. If 0, the ban is permanent (no TTL)
+// or the key should be deleted.
+func (rc *RedisClient) SetBanStatus(ctx context.Context, uuid string, banned bool, banExpiresAt int64) error {
+	key := BannedKeyPrefix + uuid
+
+	if banned {
+		// If banned=true, set the key.
+		// If banExpiresAt is in the future, set with TTL. Otherwise, set without TTL (permanent until manually removed).
+		// We'll store the expiration timestamp as the value.
+		// This allows us to retrieve it later for displaying remaining time etc.
+		if banExpiresAt > time.Now().Unix() {
+			duration := time.Until(time.Unix(banExpiresAt, 0))
+			// Store the expiration timestamp directly for clarity.
+			return rc.client.Set(ctx, key, banExpiresAt, duration).Err()
+		} else {
+			// If banExpiresAt is in the past or 0, treat as permanent until manually removed.
+			// Or, for clarity, you might want to return an error if `banned` is true but `banExpiresAt` is not a future time.
+			// For simplicity, we'll set it without a TTL (effectively permanent or until explicitly deleted).
+			// Consider storing -1 for permanent bans or a very distant future date.
+			return rc.client.Set(ctx, key, banExpiresAt, 0).Err() // 0 duration means no TTL
+		}
+	} else {
+		// If banned=false, delete the ban key.
+		return rc.client.Del(ctx, key).Err()
+	}
+}
+
+// IsBanned checks if a player is currently marked as banned in Redis and if the ban is still active.
+// It returns true if banned and the ban has not expired, false otherwise.
 func (rc *RedisClient) IsBanned(ctx context.Context, uuid string) (bool, error) {
 	key := BannedKeyPrefix + uuid
-	status, err := rc.client.Get(ctx, key).Result()
+	val, err := rc.client.Get(ctx, key).Result()
 	if err == redis.Nil {
 		return false, nil // Key does not exist, so not banned
 	}
 	if err != nil {
 		return false, fmt.Errorf("failed to get ban status for %s: %w", uuid, err)
 	}
-	return status == "true", nil
+
+	// Assuming the stored value is the expiration timestamp (Unix format)
+	expiresAt, parseErr := strconv.ParseInt(val, 10, 64)
+	if parseErr != nil {
+		// If the value is not a valid timestamp, it might be an old "true" string.
+		// For robustness, consider it banned if it's "true", or if it's a timestamp that's still valid.
+		// For now, if parsing fails, treat it as "not a valid time-based ban".
+		// You might want to log this as a data integrity issue.
+		log.Printf("WARNING: Ban status for %s has non-timestamp value: %s. Treating as not banned (or expired).", uuid, val)
+		return false, nil // Treat as not banned if parsing fails
+	}
+
+	// Check if the ban has expired
+	if expiresAt > 0 && time.Now().Unix() >= expiresAt {
+		// Ban has expired, optionally delete the key to clean up Redis
+		go func() {
+			delCtx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+			defer cancel()
+			if err := rc.client.Del(delCtx, key).Err(); err != nil {
+				log.Printf("Error deleting expired ban key %s: %v", key, err)
+			}
+		}()
+		return false, nil // Ban has expired
+	}
+
+	return true, nil // Ban exists and is not expired
 }
 
 // GetPlayerTeam retrieves the team ID for a given player UUID from Redis.

@@ -3,8 +3,10 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/Ftotnem/Backend/go/shared/api" // Import your shared API module as 'api'
@@ -15,6 +17,13 @@ import (
 type GameService struct {
 	redisClient *RedisClient
 	config      *Config // To access config values like RedisOnlineTTL if needed by handlers
+}
+
+// BanRequest is the structure for the request body for banning/unbanning.
+type BanRequest struct {
+	UUID        string `json:"uuid"`
+	DurationSec int64  `json:"duration_seconds"` // Duration in seconds. 0 for permanent, -1 to unban.
+	Reason      string `json:"reason,omitempty"`
 }
 
 // NewGameService creates a new GameService instance.
@@ -129,4 +138,85 @@ func (gs *GameService) GetPlayerOnlineStatus(w http.ResponseWriter, r *http.Requ
 		"uuid":     uuid,
 		"isOnline": isOnline,
 	})
+}
+
+// HandleBanPlayer handles requests to ban a player.
+// POST /game/ban
+// Body: { "uuid": "<player_uuid>", "duration_seconds": <seconds>, "reason": "..." }
+func (gs *GameService) HandleBanPlayer(w http.ResponseWriter, r *http.Request) {
+	var req BanRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		api.WriteError(w, http.StatusBadRequest, "Invalid request body")
+		return
+	}
+
+	if req.UUID == "" {
+		api.WriteError(w, http.StatusBadRequest, "Player UUID is required")
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+
+	// Determine expiration time based on duration_seconds
+	var banExpiresAt int64
+	if req.DurationSec <= 0 {
+		banExpiresAt = 0 // Treat 0 or negative as permanent ban (no Redis TTL, relies on explicit DEL)
+	} else {
+		banExpiresAt = time.Now().Add(time.Duration(req.DurationSec) * time.Second).Unix()
+	}
+
+	// Set ban status in Redis (real-time check)
+	err := gs.redisClient.SetBanStatus(ctx, req.UUID, true, banExpiresAt)
+	if err != nil {
+		log.Printf("Error setting ban status for player %s in Redis: %v", req.UUID, err)
+		api.WriteError(w, http.StatusInternalServerError, "Failed to ban player in Redis")
+		return
+	}
+
+	// TODO: Integrate with MongoDB for long-term persistence here
+	// This would involve calling a method on your MongoDB client/store
+	// e.g., gs.mongoStore.SaveBan(ctx, req.UUID, banExpiresAt, req.Reason)
+	// For now, we'll just log it.
+	log.Printf("Player %s banned for %d seconds (expires %v) with reason: %s. (MongoDB persistence TODO)",
+		req.UUID, req.DurationSec, time.Unix(banExpiresAt, 0), req.Reason)
+
+	api.WriteJSON(w, http.StatusOK, map[string]string{
+		"message":    fmt.Sprintf("Player %s banned until %v", req.UUID, time.Unix(banExpiresAt, 0)),
+		"uuid":       req.UUID,
+		"expires_at": strconv.FormatInt(banExpiresAt, 10),
+	})
+}
+
+// HandleUnbanPlayer handles requests to unban a player.
+// POST /game/unban
+// Body: { "uuid": "<player_uuid>" }
+func (gs *GameService) HandleUnbanPlayer(w http.ResponseWriter, r *http.Request) {
+	var req OnlineStatusRequest // Re-use OnlineStatusRequest as it only needs UUID
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		api.WriteError(w, http.StatusBadRequest, "Invalid request body")
+		return
+	}
+
+	if req.UUID == "" {
+		api.WriteError(w, http.StatusBadRequest, "Player UUID is required")
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+
+	// Remove ban status from Redis
+	err := gs.redisClient.SetBanStatus(ctx, req.UUID, false, 0) // banned=false means DEL
+	if err != nil {
+		log.Printf("Error unbanning player %s in Redis: %v", req.UUID, err)
+		api.WriteError(w, http.StatusInternalServerError, "Failed to unban player in Redis")
+		return
+	}
+
+	// TODO: Integrate with MongoDB to remove or mark ban as inactive here
+	// e.g., gs.mongoStore.RemoveBan(ctx, req.UUID) or gs.mongoStore.MarkBanInactive(ctx, req.UUID)
+	log.Printf("Player %s unbanned. (MongoDB persistence TODO)", req.UUID)
+
+	api.WriteJSON(w, http.StatusOK, map[string]string{"message": "Player unbanned", "uuid": req.UUID})
 }

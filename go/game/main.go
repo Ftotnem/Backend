@@ -47,6 +47,9 @@ func main() {
 	baseServer.Router.HandleFunc("/game/teams/total", gameService.GetTeamTotals).Methods("GET")
 	baseServer.Router.HandleFunc("/game/players/{uuid}/online", gameService.GetPlayerOnlineStatus).Methods("GET") // Optional: for checking individual player status
 
+	baseServer.Router.HandleFunc("/game/ban", gameService.HandleBanPlayer).Methods("POST")
+	baseServer.Router.HandleFunc("/game/unban", gameService.HandleUnbanPlayer).Methods("POST")
+
 	// TODO: Initialize and start the tick-based updater goroutine here
 	// go StartUpdater(context.Background(), redisClient, cfg)
 	// log.Println("Tick-based updater started.")
