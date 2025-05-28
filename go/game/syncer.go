@@ -5,6 +5,7 @@ import (
 	"log"
 	"time"
 
+	"github.com/Ftotnem/Backend/go/shared/cluster"
 	"github.com/Ftotnem/Backend/go/shared/service" // Import your shared player service client
 )
 
@@ -12,20 +13,22 @@ import (
 type PlaytimeSyncer struct {
 	redisClient         *RedisClient // Assuming RedisClient has Set method (e.g., from go-redis)
 	playerServiceClient *service.PlayerServiceClient
+	registrar           *cluster.ServiceRegistrar
 	syncInterval        time.Duration // How often to run the sync job (e.g., 1 minute)
 	ctx                 context.Context
 	cancel              context.CancelFunc
 }
 
-// NewPlaytimeSyncer creates a new instance of PlaytimeSyncer.
-func NewPlaytimeSyncer(rc *RedisClient, psc *service.PlayerServiceClient, interval time.Duration) *PlaytimeSyncer {
-	ctx, cancel := context.WithCancel(context.Background())
+// NewPlaytimeSyncer (example stub - update your actual definition)
+// Needs to accept the ServiceRegistrar
+func NewPlaytimeSyncer(redisClient *RedisClient, playerServiceClient *service.PlayerServiceClient, persistenceInterval time.Duration, registrar *cluster.ServiceRegistrar) *PlaytimeSyncer {
+	// Implement your PlaytimeSyncer creation logic here
+	log.Println("PlaytimeSyncer: Initialized with ServiceRegistrar.")
 	return &PlaytimeSyncer{
-		redisClient:         rc,
-		playerServiceClient: psc,
-		syncInterval:        interval,
-		ctx:                 ctx,
-		cancel:              cancel,
+		redisClient:         redisClient,
+		playerServiceClient: playerServiceClient,
+		syncInterval:        persistenceInterval,
+		registrar:           registrar, // Store the registrar
 	}
 }
 

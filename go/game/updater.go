@@ -5,24 +5,28 @@ import (
 	"context"
 	"log"
 	"time"
+
+	"github.com/Ftotnem/Backend/go/shared/cluster"
 )
 
 // GameUpdater handles the periodic updates for online players' playtime.
 type GameUpdater struct {
 	redisClient *RedisClient // Assuming you pass your RedisClient here
 	config      *Config      // Game service configuration
+	registrar   *cluster.ServiceRegistrar
 	ctx         context.Context
 	cancel      context.CancelFunc
 }
 
-// NewGameUpdater creates a new instance of GameUpdater.
-func NewGameUpdater(rc *RedisClient, cfg *Config) *GameUpdater {
-	ctx, cancel := context.WithCancel(context.Background())
+// NewGameUpdater (example stub - update your actual definition)
+// Needs to accept the ServiceRegistrar
+func NewGameUpdater(redisClient *RedisClient, cfg *Config, registrar *cluster.ServiceRegistrar) *GameUpdater {
+	// Implement your GameUpdater creation logic here
+	log.Println("GameUpdater: Initialized with ServiceRegistrar.")
 	return &GameUpdater{
-		redisClient: rc,
+		redisClient: redisClient,
 		config:      cfg,
-		ctx:         ctx,
-		cancel:      cancel,
+		registrar:   registrar, // Store the registrar
 	}
 }
 

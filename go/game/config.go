@@ -11,6 +11,7 @@ import (
 // Config holds all the necessary configuration for the game-service.
 type Config struct {
 	ListenAddr                string        // Address for the HTTP server (e.g., ":8082")
+	Port                      string        // Address for the HTTP server (e.g., ":8082")
 	RedisAddrs                []string      // Redis server address (e.g., "127.0.0.1:7000")
 	TickInterval              time.Duration // Duration for the game tick (e.g., 50ms)
 	PersistenceInterval       time.Duration // Duration for periodic MongoDB persistence (e.g., 1m)
@@ -105,7 +106,11 @@ func LoadConfig() (*Config, error) {
 
 	// --- Apply string defaults directly ---
 	if cfg.ListenAddr == "" {
-		cfg.ListenAddr = ":8082" // Default HTTP listen address
+		cfg.ListenAddr = "0.0.0.0" // Default HTTP listen address
+	}
+
+	if cfg.Port == "" {
+		cfg.Port = ":8082" // Default HTTP listen address
 	}
 
 	if cfg.PlayerServiceURL == "" {
