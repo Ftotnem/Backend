@@ -41,12 +41,16 @@ func main() {
 	go gameUpdater.Start()   // Run the updater in a separate goroutine
 	defer gameUpdater.Stop() // Ensure it stops on shutdown
 
+	playtimeSyncer := NewPlaytimeSyncer(redisClient, playerServiceClient, cfg.PersistenceInterval)
+	go playtimeSyncer.Start()
+	defer playtimeSyncer.Stop()
+
 	baseServer := api.NewBaseServer(cfg.ListenAddr)
 
 	// Register your handlers on the BaseServer's router
 	baseServer.Router.HandleFunc("/game/online", gameService.HandleOnline).Methods("POST")
 	baseServer.Router.HandleFunc("/game/offline", gameService.HandleOffline).Methods("POST")
-	baseServer.Router.HandleFunc("/game/teams/total", gameService.GetTeamTotals).Methods("GET")
+	baseServer.Router.HandleFunc("/game/total/{team}", gameService.GetTeamTotal).Methods("GET")
 	baseServer.Router.HandleFunc("/game/player/{uuid}/online", gameService.GetPlayerOnlineStatus).Methods("GET")
 	baseServer.Router.HandleFunc("/game/ban", gameService.HandleBanPlayer).Methods("POST")
 	baseServer.Router.HandleFunc("/game/unban", gameService.HandleUnbanPlayer).Methods("POST")

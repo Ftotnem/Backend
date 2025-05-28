@@ -1,3 +1,4 @@
+// shared/service/player.go (Revised SyncPlayerPlaytime method)
 package service
 
 import (
@@ -44,6 +45,12 @@ type UpdateDeltaPlaytimeRequest struct {
 // This directly maps to the server's CreateProfileRequest.
 type CreateProfileRequest struct {
 	UUID string `json:"uuid"`
+}
+
+// SyncPlayerPlaytimeResponse defines the expected response structure from the player service's sync endpoint.
+type SyncPlayerPlaytimeResponse struct {
+	TeamTotals map[string]float64 `json:"teamTotals"` // Map of teamID to calculated total playtime
+	Message    string             `json:"message"`
 }
 
 // GetProfile fetches a player's profile by UUID.
@@ -96,4 +103,18 @@ func (c *PlayerServiceClient) UpdateProfileDeltaPlaytime(ctx context.Context, pl
 		TicksToSet: deltaPlaytimeTicks,
 	}
 	return c.apiClient.Put(ctx, fmt.Sprintf("/profiles/%s/deltaplaytime", playerUUID.String()), reqData, nil)
+}
+
+// SyncPlayerPlaytime triggers the player service to synchronize playtime data from Redis to MongoDB
+// and also returns the aggregated team totals.
+// POST /player/sync-playtime
+func (c *PlayerServiceClient) SyncPlayerPlaytime(ctx context.Context) (*SyncPlayerPlaytimeResponse, error) {
+	// apiClient.Post expects the path relative to the baseURL, a request body (nil if none),
+	// and a response target.
+	var resp SyncPlayerPlaytimeResponse
+	err := c.apiClient.Post(ctx, "/teams/sync-totals", nil, &resp)
+	if err != nil {
+		return nil, fmt.Errorf("failed to trigger player service sync playtime: %w", err)
+	}
+	return &resp, nil
 }

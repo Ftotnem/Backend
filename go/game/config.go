@@ -48,7 +48,7 @@ func LoadConfig() (*Config, error) {
 		return nil, err
 	}
 
-	cfg.PersistenceInterval, err = getDuration("GAME_SERVICE_PERSISTENCE_INTERVAL", 1*time.Minute)
+	cfg.PersistenceInterval, err = getDuration("GAME_SERVICE_PERSISTENCE_INTERVAL", 30*time.Second)
 	if err != nil {
 		return nil, err
 	}

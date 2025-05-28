@@ -44,6 +44,8 @@ func main() {
 	playerStore := NewPlayerStore(mongoClient, cfg.MongoDBDatabase, cfg.MongoDBPlayersCollection, mojangClient, teamStore)
 	playerService := NewPlayerService(playerStore)
 
+	teamService := NewTeamService(teamStore, playerStore) // Pass playerStore to TeamService for aggregation
+
 	go startUsernameFiller(playerStore, mojangClient, 1*time.Minute)
 
 	baseServer := api.NewBaseServer(cfg.ListenAddr)
@@ -55,6 +57,8 @@ func main() {
 	baseServer.Router.HandleFunc("/profiles/{uuid}/deltaplaytime", playerService.UpdateProfileDeltaPlaytimeHandler).Methods("PUT")
 	baseServer.Router.HandleFunc("/profiles/{uuid}/ban", playerService.UpdateProfileBanStatusHandler).Methods("PUT")
 	baseServer.Router.HandleFunc("/profiles/{uuid}/lastlogin", playerService.UpdateProfileLastLoginHandler).Methods("PUT")
+
+	baseServer.Router.HandleFunc("/teams/sync-totals", teamService.SyncTeamTotalsHandler).Methods("POST")
 
 	go func() {
 		log.Printf("Player Data Service listening on %s", cfg.ListenAddr)

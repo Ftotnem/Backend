@@ -25,12 +25,12 @@ type RedisClient struct {
 const (
 	// CHANGE: Use hash tags around the UUID to ensure keys related to the same UUID
 	// hash to the same slot in a Redis Cluster.
-	OnlineKeyPrefix         = "online:{%s}:"         // Key for player online status: online:{uuid}
-	PlaytimeKeyPrefix       = "playtime:{%s}:"       // Key for total playtime: playtime:{uuid}
-	DeltaPlaytimeKeyPrefix  = "deltatime:{%s}:"      // Key for delta playtime since last persist: deltatime:{uuid}
-	BannedKeyPrefix         = "banned:{%s}:"         // Key for player ban status: banned:{uuid}
-	PlayerTeamKeyPrefix     = "team:{%s}:"           // Key for player's assigned team: team:{uuid}
-	TeamTotalPlaytimePrefix = "team_total_playtime:" // Key for total playtime of a team: team_total_playtime:<teamID>
+	OnlineKeyPrefix         = "online:{%s}:"              // Key for player online status: online:{uuid}
+	PlaytimeKeyPrefix       = "playtime:{%s}:"            // Key for total playtime: playtime:{uuid}
+	DeltaPlaytimeKeyPrefix  = "deltatime:{%s}:"           // Key for delta playtime since last persist: deltatime:{uuid}
+	BannedKeyPrefix         = "banned:{%s}:"              // Key for player ban status: banned:{uuid}
+	PlayerTeamKeyPrefix     = "team:{%s}:"                // Key for player's assigned team: team:{uuid}
+	TeamTotalPlaytimePrefix = "team_total_playtime:{%s}:" // Key for total playtime of a team: team_total_playtime:{teamID}
 )
 
 // NewRedisClient initializes a new Redis client.
@@ -64,6 +64,11 @@ func (rc *RedisClient) Close() error {
 // Helper function to format keys with the UUID hash tag
 func playerKey(prefix, uuid string) string {
 	return fmt.Sprintf(prefix, uuid)
+}
+
+// Helper function to format team keys with the team ID hash tag
+func teamKey(prefix, teamID string) string {
+	return fmt.Sprintf(prefix, teamID)
 }
 
 // SetOnlineStatus sets a player's online status in Redis with a TTL.
@@ -144,33 +149,96 @@ func (rc *RedisClient) SetPlayerTeam(ctx context.Context, uuid string, teamID st
 	return rc.client.Set(ctx, key, teamID, 0).Err()
 }
 
-// GetPlayerTeam retrieves the team ID for a given player UUID from Redis.
-func (rc *RedisClient) GetPlayerTeam(ctx context.Context, uuid string) (string, error) {
-	key := playerKey(PlayerTeamKeyPrefix, uuid)
-	teamID, err := rc.client.Get(ctx, key).Result()
-	if err == redis.Nil {
-		return "", fmt.Errorf("team not found for player %s", uuid)
-	}
+func (rc *RedisClient) SetTeamTotal(ctx context.Context, teamID string, totalPlaytime float64) error {
+	redisKey := teamKey(TeamTotalPlaytimePrefix, teamID)
+	err := rc.client.Set(ctx, redisKey, totalPlaytime, 0).Err()
 	if err != nil {
-		return "", fmt.Errorf("failed to get team for player %s: %w", uuid, err)
+		return fmt.Errorf("failed to set team total playtime for %s in Redis: %w", teamID, err)
 	}
-	return teamID, nil
+	log.Printf("INFO: Successfully set Redis total playtime for team '%s' to %.2f ticks.", teamID, totalPlaytime)
+	return nil
 }
 
-// IncrementPlayerPlaytime increments a player's total playtime in Redis
-// by the value stored in their delta playtime key.
-// It assumes the delta playtime key holds a constant value to be added.
+// IncrementTeamTotalPlaytime increments a team's total playtime in Redis.
+func (rc *RedisClient) IncrementTeamTotalPlaytime(ctx context.Context, teamID string, ticks float64) error {
+	key := teamKey(TeamTotalPlaytimePrefix, teamID) // Use the new helper
+	return rc.client.IncrByFloat(ctx, key, ticks).Err()
+}
+
+// GetTeamTotalPlaytime retrieves a team's total playtime from Redis.
+func (rc *RedisClient) GetTeamTotalPlaytime(ctx context.Context, teamID string) (float64, error) {
+	key := teamKey(TeamTotalPlaytimePrefix, teamID) // Use the new helper
+	val, err := rc.client.Get(ctx, key).Float64()
+	if err == redis.Nil {
+		return 0, nil // Return 0 for non-existent team playtime, as it implies 0
+	}
+	if err != nil {
+		return 0, fmt.Errorf("failed to get team total playtime for %s: %w", teamID, err)
+	}
+	return val, nil
+}
+
+// And GetAllTeamTotalPlaytimes needs to use the new pattern for scanning:
+// GetAllTeamTotalPlaytimes fetches all team total playtime values from Redis.
+func (rc *RedisClient) GetAllTeamTotalPlaytimes(ctx context.Context) (map[string]float64, error) {
+	teamPlaytimes := make(map[string]float64)
+	// Adjust SCAN pattern to match the new key format
+	iter := rc.client.Scan(ctx, 0, TeamTotalPlaytimePrefix+"*", 0).Iterator()
+	for iter.Next(ctx) {
+		key := iter.Val()
+		// Extract teamID from key: "team_total_playtime:{teamID}:"
+		// Find '{' and '}' to get the hash tag content
+		start := strings.Index(key, "{")
+		end := strings.Index(key, "}")
+		teamID := ""
+		if start != -1 && end != -1 && end > start {
+			teamID = key[start+1 : end]
+		} else {
+			log.Printf("WARN: Could not parse team ID from team total playtime key: %s", key)
+			continue
+		}
+		val, err := rc.client.Get(ctx, key).Float64()
+		if err != nil {
+			log.Printf("WARN: Failed to get team total playtime for %s (key %s): %v", teamID, key, err)
+			continue
+		}
+		teamPlaytimes[teamID] = val
+	}
+	if err := iter.Err(); err != nil {
+		return nil, fmt.Errorf("failed to scan team total playtime keys: %w", err)
+	}
+	return teamPlaytimes, nil
+}
+
+// IncrementPlayerPlaytime increments a player's total playtime and their team's total playtime in Redis.
 func (rc *RedisClient) IncrementPlayerPlaytime(ctx context.Context, uuid string) error {
 	deltaKey := playerKey(DeltaPlaytimeKeyPrefix, uuid)
 	totalPlaytimeKey := playerKey(PlaytimeKeyPrefix, uuid)
+	playerTeamKey := playerKey(PlayerTeamKeyPrefix, uuid) // Renamed for clarity
+
+	// Get the team ID for the player.
+	teamIDResult, err := rc.client.Get(ctx, playerTeamKey).Result()
+	if err == redis.Nil {
+		log.Printf("WARN: Team ID key %s not found for player %s. Cannot increment team playtime.", playerTeamKey, uuid)
+		// Decide how to handle this:
+		// 1. Return an error if team association is mandatory:
+		// return fmt.Errorf("team ID not found for player %s", uuid)
+		// 2. Or, perhaps proceed only with player playtime increment if team playtime is optional:
+		//    (This would require adjusting the pipeline logic below)
+		return nil // For now, following original flow for missing data
+	}
+	if err != nil {
+		return fmt.Errorf("failed to get team ID for player %s: %w", uuid, err)
+	}
+	teamID := teamIDResult // Now teamID is the actual string
+
+	teamTotalPlaytimeKey := teamKey(TeamTotalPlaytimePrefix, teamID) // Using the new teamKey helper
 
 	// 1. Get the delta value as a string from Redis.
 	deltaStr, err := rc.client.Get(ctx, deltaKey).Result()
 	if err == redis.Nil {
-		// If the delta key doesn't exist, we can assume the delta is 0
-		// or decide to return an error, depending on your application's logic.
-		// For now, we'll log and return, meaning no increment occurs.
 		log.Printf("INFO: Delta playtime key %s not found for %s. Assuming delta is 0.", deltaKey, uuid)
+		// If delta is 0, there's nothing to increment.
 		return nil
 	}
 	if err != nil {
@@ -180,14 +248,31 @@ func (rc *RedisClient) IncrementPlayerPlaytime(ctx context.Context, uuid string)
 	// 2. Convert the string delta value to a float64.
 	deltaFloat, err := strconv.ParseFloat(deltaStr, 64)
 	if err != nil {
-		// This handles cases where the value stored under DeltaPlaytimeKeyPrefix
-		// is not a valid float (e.g., it's "abc").
 		return fmt.Errorf("failed to parse delta playtime '%s' for %s as float: %w", deltaStr, uuid, err)
 	}
 
-	// 3. Atomically increment the total playtime by the float value.
-	// IncrByFloat is an atomic operation for the increment itself.
-	return rc.client.IncrByFloat(ctx, totalPlaytimeKey, deltaFloat).Err()
+	// Use a Redis Pipeline for atomic execution of both increments.
+	// This ensures both operations are sent to Redis as a single batch,
+	// and if they share a hash slot, they'll be processed atomically on that node.
+	pipe := rc.client.Pipeline()
+	playerIncr := pipe.IncrByFloat(ctx, totalPlaytimeKey, deltaFloat)
+	teamIncr := pipe.IncrByFloat(ctx, teamTotalPlaytimeKey, deltaFloat)
+
+	_, err = pipe.Exec(ctx)
+	if err != nil {
+		// pipe.Exec already aggregates errors. Check if any command failed within the pipeline.
+		return fmt.Errorf("failed to execute playtime increments in pipeline for %s (team %s): %w", uuid, teamID, err)
+	}
+
+	// Although pipe.Exec aggregates, checking individual command errors can provide more specific context.
+	if playerIncr.Err() != nil {
+		return fmt.Errorf("player playtime increment failed for %s: %w", uuid, playerIncr.Err())
+	}
+	if teamIncr.Err() != nil {
+		return fmt.Errorf("team playtime increment failed for team %s: %w", teamID, teamIncr.Err())
+	}
+
+	return nil
 }
 
 // --- NEW RedisClient GETTER METHODS START ---
@@ -295,25 +380,6 @@ func (rc *RedisClient) RemovePlayerSessionData(ctx context.Context, uuid string)
 	return nil
 }
 
-// IncrementTeamTotalPlaytime increments a team's total playtime in Redis.
-func (rc *RedisClient) IncrementTeamTotalPlaytime(ctx context.Context, teamID string, ticks float64) error {
-	key := TeamTotalPlaytimePrefix + teamID // No hash tag here, as teamID might not be consistent across other team-related keys
-	return rc.client.IncrByFloat(ctx, key, ticks).Err()
-}
-
-// GetTeamTotalPlaytime retrieves a team's total playtime from Redis.
-func (rc *RedisClient) GetTeamTotalPlaytime(ctx context.Context, teamID string) (float64, error) {
-	key := TeamTotalPlaytimePrefix + teamID
-	val, err := rc.client.Get(ctx, key).Float64()
-	if err == redis.Nil {
-		return 0, nil
-	}
-	if err != nil {
-		return 0, fmt.Errorf("failed to get team total playtime for %s: %w", teamID, err)
-	}
-	return val, nil
-}
-
 // GetAllOnlineUUIDs retrieves all UUIDs currently marked as online.
 // This uses SCAN to iterate keys, which is suitable for production.
 // In redisclient.go (GetAllOnlineUUIDs)
@@ -419,24 +485,4 @@ func (rc *RedisClient) GetAllPlaytimeAndDeltaPlaytime(ctx context.Context) (map[
 	}
 
 	return playtimes, deltaPlaytimes, nil
-}
-
-// GetAllTeamTotalPlaytimes fetches all team total playtime values from Redis.
-func (rc *RedisClient) GetAllTeamTotalPlaytimes(ctx context.Context) (map[string]float64, error) {
-	teamPlaytimes := make(map[string]float64)
-	iter := rc.client.Scan(ctx, 0, TeamTotalPlaytimePrefix+"*", 0).Iterator()
-	for iter.Next(ctx) {
-		key := iter.Val()
-		teamID := key[len(TeamTotalPlaytimePrefix):]
-		val, err := rc.client.Get(ctx, key).Float64()
-		if err != nil {
-			log.Printf("WARN: Failed to get team total playtime for %s: %v", teamID, err)
-			continue
-		}
-		teamPlaytimes[teamID] = val
-	}
-	if err := iter.Err(); err != nil {
-		return nil, fmt.Errorf("failed to scan team total playtime keys: %w", err)
-	}
-	return teamPlaytimes, nil
 }

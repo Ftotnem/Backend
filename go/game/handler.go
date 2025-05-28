@@ -54,6 +54,11 @@ type DeltaPlaytimeResponse struct {
 	Deltatime float64 `json:"deltatime"`
 }
 
+// TeamTotalResponse defines the structure for the JSON response for a single team's total.
+type TeamTotalResponse struct {
+	TotalPlaytime float64 `json:"totalPlaytime"`
+}
+
 // --- NEW HANDLER METHODS START ---
 
 // handleGetPlaytime handles requests to retrieve a player's total playtime from Redis.
@@ -212,7 +217,43 @@ func (gs *GameService) HandleOnline(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	} else {
-		log.Printf("Player %s playtime data already in Redis for this session. Skipping DB load.", playerUUID.String())
+		// When handlel online happens also try to save the playtime to player-sercice
+		// 1. Get playtime and delta playtime from Redis
+		totalPlaytime, deltaPlaytime, err := gs.redisClient.GetPlayerPlaytimeAndDelta(ctx, playerUUID.String())
+		if err != nil {
+			log.Printf("Error retrieving playtime for %s from Redis: %v", playerUUID.String(), err)
+			// Don't fail here if data is missing, we still want to mark offline
+			api.WriteError(w, http.StatusInternalServerError, "Failed to retrieve player playtime from Redis")
+			return
+		}
+
+		// 2. Persist playtime to Player Data Service (MongoDB)
+		// Only attempt to update if playtime data was actually retrieved from Redis
+		if totalPlaytime > 0 || deltaPlaytime > 0 { // Check if there's *some* data to persist
+			log.Printf("Persisting playtime for %s: Total=%.2f, Delta=%.2f", playerUUID.String(), totalPlaytime, deltaPlaytime)
+			// Update total playtime in MongoDB
+			err = gs.playerServiceClient.UpdateProfilePlaytime(ctx, playerUUID, totalPlaytime)
+			if err != nil {
+				log.Printf("Error updating total playtime for %s in Player Data Service: %v", playerUUID.String(), err)
+				// Log and continue, don't block offline process for this.
+			}
+
+			// Update delta playtime in MongoDB (often reset to 0 after persistence on player data service side)
+			err = gs.playerServiceClient.UpdateProfileDeltaPlaytime(ctx, playerUUID, deltaPlaytime)
+			if err != nil {
+				log.Printf("Error updating delta playtime for %s in Player Data Service: %v", playerUUID.String(), err)
+				// Log and continue
+			}
+
+			// Update LastLoginAt in MongoDB
+			err = gs.playerServiceClient.UpdateProfileLastLogin(ctx, playerUUID)
+			if err != nil {
+				log.Printf("Error updating last login for %s in Player Data Service: %v", playerUUID.String(), err)
+				// Log and continue
+			}
+		} else {
+			log.Printf("No playtime data found in Redis for %s to persist to Player Data Service.", playerUUID.String())
+		}
 	}
 
 	// Mark player as online in Redis (always done after playtime sync)
@@ -303,20 +344,35 @@ func (gs *GameService) HandleOffline(w http.ResponseWriter, r *http.Request) {
 	log.Printf("Player %s is now offline. Data persisted and Redis session keys cleared.", playerUUID.String())
 }
 
-// GetTeamTotals handles requests to retrieve the total playtime for all teams.
-// GET /game/teams/total
-func (gs *GameService) GetTeamTotals(w http.ResponseWriter, r *http.Request) {
+// GetTeamTotal handles requests to retrieve the total playtime for a specific team.
+// GET /game/total/{team}
+func (gs *GameService) GetTeamTotal(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
 
-	teamTotals, err := gs.redisClient.GetAllTeamTotalPlaytimes(ctx)
-	if err != nil {
-		log.Printf("Error retrieving team total playtimes: %v", err)
-		api.WriteError(w, http.StatusInternalServerError, "Failed to retrieve team total playtimes")
+	vars := mux.Vars(r)
+	teamID := vars["team"] // Extract the team ID from the path variable
+
+	if teamID == "" {
+		api.WriteError(w, http.StatusBadRequest, "Team ID is required in the path (e.g., /game/total/AQUA_CREEPERS)")
 		return
 	}
 
-	api.WriteJSON(w, http.StatusOK, teamTotals)
+	// Assuming gs.redisClient.GetTeamTotalPlaytime is a method that fetches playtime for ONE team
+	totalPlaytime, err := gs.redisClient.GetTeamTotalPlaytime(ctx, teamID)
+	if err != nil {
+		// Log the detailed error for debugging, but return a generic error to the client
+		log.Printf("Error retrieving total playtime for team '%s': %v", teamID, err)
+		api.WriteError(w, http.StatusInternalServerError, "Failed to retrieve team total playtime")
+		return
+	}
+
+	// Prepare the response in the expected JSON format
+	response := TeamTotalResponse{
+		TotalPlaytime: totalPlaytime,
+	}
+
+	api.WriteJSON(w, http.StatusOK, response)
 }
 
 // GetPlayerOnlineStatus handles requests to check player online status.
