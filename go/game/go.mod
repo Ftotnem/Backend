@@ -12,6 +12,7 @@ require (
 )
 
 require (
+	github.com/Ftotnem/Backend/go/shared/cluster v0.0.0-20250528191900-956433e1e1b2 // indirect
 	github.com/Ftotnem/Backend/go/shared/models v0.0.0-20250527195226-42f7aebcb30b // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/dgryski/go-rendezvous v0.0.0-20200823014737-9f7001d12a5f // indirect

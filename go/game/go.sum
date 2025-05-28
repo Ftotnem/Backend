@@ -2,6 +2,8 @@ github.com/Ftotnem/Backend/go/shared/api v0.0.0-20250527153451-3d298d427332 h1:6
 github.com/Ftotnem/Backend/go/shared/api v0.0.0-20250527153451-3d298d427332/go.mod h1:vatS9TlOOj9eVQ6sH8NxwUq9buJLCNQnSt7t3Ts71Pg=
 github.com/Ftotnem/Backend/go/shared/api v0.0.0-20250527195226-42f7aebcb30b h1:RXMue2jgCRAnqLNNGY93uUD1FNQoo0+XQDpMYC0wCV0=
 github.com/Ftotnem/Backend/go/shared/api v0.0.0-20250527195226-42f7aebcb30b/go.mod h1:vatS9TlOOj9eVQ6sH8NxwUq9buJLCNQnSt7t3Ts71Pg=
+github.com/Ftotnem/Backend/go/shared/cluster v0.0.0-20250528191900-956433e1e1b2 h1:d6HiS1Qp200thQIhhF0juGxubImkodmhgxiigPjjPL8=
+github.com/Ftotnem/Backend/go/shared/cluster v0.0.0-20250528191900-956433e1e1b2/go.mod h1:vKP328/OFhTF0FpUNDeUXVcK0WZ1bggCorp1Z7DaYNA=
 github.com/Ftotnem/Backend/go/shared/models v0.0.0-20250527153451-3d298d427332 h1:IMv9EVCDhejGftFkDKyKd8pHLgzSMPdfYZkw+sNQLps=
 github.com/Ftotnem/Backend/go/shared/models v0.0.0-20250527153451-3d298d427332/go.mod h1:y2mktNfyWATDj8QpGp64iFUh08tw4Nk096f0VReHcTM=
 github.com/Ftotnem/Backend/go/shared/models v0.0.0-20250527195226-42f7aebcb30b h1:r9kZdJJm/t4YOCyOzue8oYKFr0tdT2a3PjAjjEjfEMA=

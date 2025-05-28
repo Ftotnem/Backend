@@ -1,4 +1,4 @@
-package clustermembership
+package cluster
 
 import (
 	"context"
