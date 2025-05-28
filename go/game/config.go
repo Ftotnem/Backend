@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"net" // New import for net.SplitHostPort
 	"os"
 	"strconv"
 	"strings"
@@ -10,8 +11,8 @@ import (
 
 // Config holds all the necessary configuration for the game-service.
 type Config struct {
-	ListenAddr                string        // Address for the HTTP server (e.g., ":8082")
-	Port                      string        // Address for the HTTP server (e.g., ":8082")
+	ListenAddr                string        // Address for the HTTP server (e.g., ":8082" or "0.0.0.0:8082")
+	ServiceRegistrationPort   int           // The numeric port to register with the cluster (extracted from ListenAddr)
 	RedisAddrs                []string      // Redis server address (e.g., "127.0.0.1:7000")
 	TickInterval              time.Duration // Duration for the game tick (e.g., 50ms)
 	PersistenceInterval       time.Duration // Duration for periodic MongoDB persistence (e.g., 1m)
@@ -104,13 +105,29 @@ func LoadConfig() (*Config, error) {
 		}
 	}
 
-	// --- Apply string defaults directly ---
+	// --- Apply string defaults and extract ServiceRegistrationPort ---
 	if cfg.ListenAddr == "" {
-		cfg.ListenAddr = "0.0.0.0" // Default HTTP listen address
+		cfg.ListenAddr = ":8082" // Default HTTP listen address, including port
 	}
 
-	if cfg.Port == "" {
-		cfg.Port = ":8082" // Default HTTP listen address
+	// Parse the port from ListenAddr for service registration
+	_, portStr, err := net.SplitHostPort(cfg.ListenAddr)
+	if err != nil {
+		// If SplitHostPort fails, check if ListenAddr is just a host (e.g., "0.0.0.0")
+		// In that case, we need to apply a default port.
+		if !strings.Contains(cfg.ListenAddr, ":") {
+			defaultPort := "8082" // Use a common default port if only host is specified
+			cfg.ListenAddr = fmt.Sprintf("%s:%s", cfg.ListenAddr, defaultPort)
+			portStr = defaultPort
+		} else {
+			// If it contains a colon but is still invalid (e.g., "::"), return an error
+			return nil, fmt.Errorf("invalid ListenAddr format for port extraction: %w", err)
+		}
+	}
+
+	cfg.ServiceRegistrationPort, err = strconv.Atoi(portStr)
+	if err != nil {
+		return nil, fmt.Errorf("invalid port number extracted from ListenAddr '%s': %w", portStr, err)
 	}
 
 	if cfg.PlayerServiceURL == "" {

@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/Ftotnem/Backend/go/shared/api"
-	"github.com/Ftotnem/Backend/go/shared/cluster"
+	cluster "github.com/Ftotnem/Backend/go/shared/cluster"
 	"github.com/Ftotnem/Backend/go/shared/service"
 	"go.minekube.com/gate/pkg/util/uuid"
 )
@@ -37,21 +37,21 @@ func main() {
 
 	// --- NEW: Initialize Service Registrar ---
 	instanceID := uuid.New().String() // Generate a unique ID for this instance
+
 	serviceConfig := cluster.ServiceConfig{
 		ServiceID:         instanceID,
-		ServiceType:       "game-service", // Define your service type
-		IP:                cfg.ListenAddr, // Or actual public IP if available
-		Port:              cfg.Port,       // Assuming cfg.Port holds the service's listening port
+		ServiceType:       "game-service",
+		IP:                "0.0.0.0",                   // Or extract host from ListenAddr if you need specific IP
+		Port:              cfg.ServiceRegistrationPort, // Now an int!
 		HeartbeatInterval: 5 * time.Second,
-		HeartbeatTTL:      15 * time.Second, // Consider dead after 15s without heartbeat
-		CleanupInterval:   30 * time.Second, // How often to clean up truly stale entries
-		// You can add more metadata here if needed, e.g., "version": "1.0.0"
+		HeartbeatTTL:      15 * time.Second,
+		CleanupInterval:   30 * time.Second,
 		InitialMetadata: map[string]string{
 			"version": "1.0.0",
 		},
 	}
 
-	registrar, err := cluster.NewServiceRegistrar(redisClient, serviceConfig)
+	registrar, err := cluster.NewServiceRegistrar(redisClient.client, serviceConfig)
 	if err != nil {
 		log.Fatalf("Failed to create service registrar: %v", err)
 	}

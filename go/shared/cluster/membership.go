@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/redis/go-redis/v9"
+	"github.com/redis/go-redis/v9" // Ensure you're using v9
 )
 
 // Constants for Redis keys and default intervals.
@@ -29,7 +29,7 @@ type ServiceInfo struct {
 	ID        string            `json:"id"`                 // Unique ID for this instance (UUID)
 	Type      string            `json:"type"`               // Type of service (e.g., "game", "player", "proxy")
 	IP        string            `json:"ip,omitempty"`       // IP address of the service instance
-	Port      int               `json:"port,omitempty"`     // Port of the service instance
+	Port      int               `json:"port,omitempty"`     // Port of the service instance (NOW int)
 	LastSeen  time.Time         `json:"last_seen"`          // Last time this instance sent a heartbeat
 	CreatedAt time.Time         `json:"created_at"`         // When this instance started
 	Metadata  map[string]string `json:"metadata,omitempty"` // Generic additional data
@@ -43,7 +43,7 @@ type ServiceConfig struct {
 	ServiceType string
 	// IP: IP address of this service instance. Optional.
 	IP string
-	// Port: Port of this service instance. Optional.
+	// Port: Port of this service instance. Optional. (NOW int)
 	Port int
 	// InitialMetadata: Any additional key-value pairs to store with this service instance. Optional.
 	InitialMetadata map[string]string
@@ -60,8 +60,8 @@ type ServiceConfig struct {
 // ServiceRegistrar manages the registration and heartbeat for a service instance in Redis using a Hash.
 type ServiceRegistrar struct {
 	config      ServiceConfig
-	redisClient *redis.Client
-	currentInfo ServiceInfo // Holds the current state of this instance's info
+	redisClient *redis.ClusterClient // Changed to redis.ClusterClient
+	currentInfo ServiceInfo          // Holds the current state of this instance's info
 
 	heartbeatCtx    context.Context
 	heartbeatCancel context.CancelFunc
@@ -72,9 +72,9 @@ type ServiceRegistrar struct {
 }
 
 // NewServiceRegistrar creates a new ServiceRegistrar instance.
-// `redisClient` is the Redis client to use.
+// `redisClient` is the Redis Cluster client to use.
 // `config` provides the details for this service instance.
-func NewServiceRegistrar(redisClient *redis.Client, config ServiceConfig) (*ServiceRegistrar, error) {
+func NewServiceRegistrar(redisClient *redis.ClusterClient, config ServiceConfig) (*ServiceRegistrar, error) { // Changed signature
 	if redisClient == nil {
 		return nil, fmt.Errorf("redis client cannot be nil")
 	}
@@ -100,12 +100,12 @@ func NewServiceRegistrar(redisClient *redis.Client, config ServiceConfig) (*Serv
 
 	sr := &ServiceRegistrar{
 		config:      config,
-		redisClient: redisClient,
+		redisClient: redisClient, // Assign redis.ClusterClient
 		currentInfo: ServiceInfo{
 			ID:        config.ServiceID,
 			Type:      config.ServiceType,
 			IP:        config.IP,
-			Port:      config.Port,
+			Port:      config.Port, // Port is now int
 			CreatedAt: time.Now(),
 			Metadata:  config.InitialMetadata,
 		},

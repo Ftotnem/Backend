@@ -6,7 +6,7 @@ import (
 	"log"
 	"time"
 
-	"github.com/Ftotnem/Backend/go/shared/cluster"
+	cluster "github.com/Ftotnem/Backend/go/shared/cluster"
 )
 
 // GameUpdater handles the periodic updates for online players' playtime.

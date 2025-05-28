@@ -5,7 +5,7 @@ import (
 	"log"
 	"time"
 
-	"github.com/Ftotnem/Backend/go/shared/cluster"
+	cluster "github.com/Ftotnem/Backend/go/shared/cluster"
 	"github.com/Ftotnem/Backend/go/shared/service" // Import your shared player service client
 )
 
