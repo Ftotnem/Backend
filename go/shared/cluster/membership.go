@@ -274,3 +274,9 @@ func (sr *ServiceRegistrar) Stop(ctx context.Context) {
 func (sr *ServiceRegistrar) getRedisKey(serviceType string) string {
 	return fmt.Sprintf("%s%s", redisRegistryHashPrefix, serviceType)
 }
+
+// GetConfig returns the ServiceConfig associated with this registrar.
+// This is a new public getter for the config.
+func (sr *ServiceRegistrar) GetConfig() ServiceConfig {
+	return sr.config
+}

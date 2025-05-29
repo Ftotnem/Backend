@@ -82,7 +82,7 @@ func main() {
 	go playtimeSyncer.Start()
 	defer playtimeSyncer.Stop()
 
-	baseServer := api.NewBaseServer(cfg.ListenAddr + cfg.Port)
+	baseServer := api.NewBaseServer(cfg.ListenAddr)
 
 	// Register your handlers on the BaseServer's router
 	baseServer.Router.HandleFunc("/game/online", gameService.HandleOnline).Methods("POST")

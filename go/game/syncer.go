@@ -22,13 +22,16 @@ type PlaytimeSyncer struct {
 // NewPlaytimeSyncer (example stub - update your actual definition)
 // Needs to accept the ServiceRegistrar
 func NewPlaytimeSyncer(redisClient *RedisClient, playerServiceClient *service.PlayerServiceClient, persistenceInterval time.Duration, registrar *cluster.ServiceRegistrar) *PlaytimeSyncer {
-	// Implement your PlaytimeSyncer creation logic here
 	log.Println("PlaytimeSyncer: Initialized with ServiceRegistrar.")
+	// Create a cancellable context for the PlaytimeSyncer
+	ctx, cancel := context.WithCancel(context.Background())
 	return &PlaytimeSyncer{
 		redisClient:         redisClient,
 		playerServiceClient: playerServiceClient,
 		syncInterval:        persistenceInterval,
 		registrar:           registrar, // Store the registrar
+		ctx:                 ctx,       // Initialize context
+		cancel:              cancel,    // Initialize cancel function
 	}
 }
 
